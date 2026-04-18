@@ -1,5 +1,5 @@
 import React, { useState, useRef, useEffect } from 'react';
-import { Send, Image as ImageIcon, Smile, MoreVertical, Download, Sparkles, Heart as HeartIcon, Plus, X, Check, Loader2, ArrowDown, ImagePlus, Settings, RefreshCw, Minimize2, Link2, Search, ChevronDown } from 'lucide-react';
+import { Send, Image as ImageIcon, Smile, MoreVertical, Download, Sparkles, Heart as HeartIcon, Plus, X, Check, Loader2, ArrowDown, ImagePlus, Settings, RefreshCw, Minimize2, Link2, Search, ChevronDown, Trash2 } from 'lucide-react';
 import EmojiPicker, { Theme } from 'emoji-picker-react';
 import type { Message, Profile, Sticker } from '../types';
 import { useChat } from '../hooks/useChat';
@@ -120,6 +120,9 @@ export const ChatBox: React.FC<ChatBoxProps> = ({
   const [openedHeartIds, setOpenedHeartIds] = useState<Set<string | number>>(new Set());
   const [isScratchComplete, setIsScratchComplete] = useState(false);
   const [isRetiringHeart, setIsRetiringHeart] = useState(false);
+  const [draggingStickerId, setDraggingStickerId] = useState<string | null>(null);
+  const [isOverTrashZone, setIsOverTrashZone] = useState(false);
+  const [pendingDeleteSticker, setPendingDeleteSticker] = useState<Sticker | null>(null);
   const [sendButtonCoords, setSendButtonCoords] = useState<{ x: string; y: string }>({ x: '80%', y: '80%' });
   const [renderWindowEnd, setRenderWindowEnd] = useState(0);
   const typingTimeoutRef = useRef<number | undefined>(undefined);
@@ -196,6 +199,7 @@ export const ChatBox: React.FC<ChatBoxProps> = ({
   const viewportRef = useRef<HTMLDivElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const emojiPickerRef = useRef<HTMLDivElement>(null);
+  const stickerRibbonRef = useRef<HTMLDivElement>(null);
   const sendButtonRef = useRef<HTMLButtonElement>(null);
   const notificationAudioRef = useRef<HTMLAudioElement>(null);
   const prevIsOnline = useRef<boolean>(isOnline);
@@ -235,6 +239,71 @@ export const ChatBox: React.FC<ChatBoxProps> = ({
   const fetchStickers = async () => {
     const { data } = await supabase.from('stickers').select('*').order('created_at', { ascending: false });
     if (data) setStickers(data);
+  };
+
+  const extractStickerStoragePath = (url: string) => {
+    const marker = '/storage/v1/object/public/stickers/';
+    const markerIndex = url.indexOf(marker);
+    if (markerIndex === -1) return null;
+    const rawPath = url.slice(markerIndex + marker.length).split('?')[0];
+    return decodeURIComponent(rawPath);
+  };
+
+  const deleteStickerPermanently = async (sticker: Sticker) => {
+    setStickers(prev => prev.filter(s => s.id !== sticker.id));
+
+    const storagePath = extractStickerStoragePath(sticker.image_url);
+    if (storagePath) {
+      const { error: storageError } = await supabase.storage.from('stickers').remove([storagePath]);
+      if (storageError) {
+        console.warn('⚠️ [Sticker] Failed to remove storage object:', storageError.message);
+      }
+    }
+
+    const { error } = await supabase
+      .from('stickers')
+      .delete()
+      .eq('id', sticker.id)
+      .eq('user_id', currentUser.id);
+
+    if (error) {
+      console.error('❌ [Sticker] Failed to delete sticker:', error.message);
+      fetchStickers();
+      return;
+    }
+
+    console.log('🗑️ [Sticker] Deleted permanently:', sticker.id);
+  };
+
+  const handleStickerDragStart = (stickerId: string, e: React.DragEvent<HTMLDivElement>) => {
+    setDraggingStickerId(stickerId);
+    setIsOverTrashZone(false);
+    e.dataTransfer.effectAllowed = 'move';
+    e.dataTransfer.setData('text/plain', stickerId);
+  };
+
+  const handleStickerDragEnd = () => {
+    setDraggingStickerId(null);
+    setIsOverTrashZone(false);
+  };
+
+  const handleDropToTrash = async (e: React.DragEvent<HTMLDivElement>) => {
+    e.preventDefault();
+    e.stopPropagation();
+    setIsOverTrashZone(false);
+
+    if (!draggingStickerId) return;
+    const target = stickers.find(s => s.id === draggingStickerId);
+    if (target) {
+      setPendingDeleteSticker(target);
+    }
+    setDraggingStickerId(null);
+  };
+
+  const confirmDeleteSticker = async () => {
+    if (!pendingDeleteSticker) return;
+    await deleteStickerPermanently(pendingDeleteSticker);
+    setPendingDeleteSticker(null);
   };
 
   const markAsRead = async () => {
@@ -573,6 +642,25 @@ export const ChatBox: React.FC<ChatBoxProps> = ({
       document.removeEventListener('touchstart', handleOutsideClick);
     };
   }, [showEmoji]);
+
+  useEffect(() => {
+    if (!showStickerRibbon) return;
+
+    const handleOutsideRibbon = (event: MouseEvent | TouchEvent) => {
+      const target = event.target as Node;
+      if (stickerRibbonRef.current && !stickerRibbonRef.current.contains(target)) {
+        setShowStickerRibbon(false);
+      }
+    };
+
+    document.addEventListener('mousedown', handleOutsideRibbon);
+    document.addEventListener('touchstart', handleOutsideRibbon);
+
+    return () => {
+      document.removeEventListener('mousedown', handleOutsideRibbon);
+      document.removeEventListener('touchstart', handleOutsideRibbon);
+    };
+  }, [showStickerRibbon]);
 
   return (
     <div 
@@ -1035,7 +1123,7 @@ export const ChatBox: React.FC<ChatBoxProps> = ({
         <div className={cn("max-w-4xl mx-auto flex flex-col space-y-4", isFocusedMode ? "immersion-clear-ui" : "")}>
           {/* Sticker Ribbon */}
           {showStickerRibbon && stickers.length > 0 && (
-            <div className={cn("flex items-center space-x-3 group/ribbon animate-in slide-in-from-bottom-2 duration-300", isFocusedMode ? "immersion-clear-ui" : "")}>
+            <div ref={stickerRibbonRef} className={cn("flex items-center space-x-3 group/ribbon animate-in slide-in-from-bottom-2 duration-300", isFocusedMode ? "immersion-clear-ui" : "") }>
               <div className={cn("flex items-center space-x-5 overflow-x-auto custom-scrollbar-hide pointer-events-auto py-1 flex-1", isFocusedMode ? "immersion-clear-ui" : "")}>
                 {stickers.map(s => (
                   <div 
@@ -1050,13 +1138,6 @@ export const ChatBox: React.FC<ChatBoxProps> = ({
                   </div>
                 ))}
               </div>
-              <button 
-                onClick={() => setShowStickerRibbon(false)}
-                className="p-2 text-gray-400 hover:text-pink-500 hover:bg-pink-50 dark:hover:bg-slate-800 rounded-xl transition-all opacity-0 group-hover/ribbon:opacity-100"
-                title="Ẩn dải băng"
-              >
-                <X className="w-5 h-5" />
-              </button>
             </div>
           )}
 
@@ -1339,6 +1420,9 @@ export const ChatBox: React.FC<ChatBoxProps> = ({
                     {stickers.map(s => (
                        <div 
                          key={s.id} 
+                         draggable
+                         onDragStart={(e) => handleStickerDragStart(s.id, e)}
+                         onDragEnd={handleStickerDragEnd}
                          onClick={() => { 
                            sendMessage('', s.image_url); 
                            setShowStickers(false); 
@@ -1353,7 +1437,51 @@ export const ChatBox: React.FC<ChatBoxProps> = ({
                     ))}
                  </div>
               </div>
+
+              <div className="px-6 pb-6 pt-3 border-t border-pink-100/70 dark:border-white/10 bg-white/70 dark:bg-black/20 backdrop-blur-sm">
+                <div
+                  onDragOver={(e) => {
+                    e.preventDefault();
+                    e.dataTransfer.dropEffect = 'move';
+                    setIsOverTrashZone(true);
+                  }}
+                  onDragLeave={() => setIsOverTrashZone(false)}
+                  onDrop={handleDropToTrash}
+                  className={cn(
+                    "h-14 rounded-2xl border-2 border-dashed flex items-center justify-center gap-2 transition-all",
+                    isOverTrashZone
+                      ? "border-rose-500 bg-rose-500/15 text-rose-600 dark:text-rose-300 scale-[1.01]"
+                      : "border-rose-300/70 dark:border-rose-500/30 text-rose-500/80 dark:text-rose-300/80 bg-rose-50/60 dark:bg-rose-900/10"
+                  )}
+                >
+                  <Trash2 className="w-4 h-4" />
+                  <span className="text-[11px] sm:text-xs font-bold uppercase tracking-wide">
+                    Kéo nhãn dán vào đây để xóa vĩnh viễn
+                  </span>
+                </div>
+              </div>
            </div>
+        </div>
+      )}
+
+      {pendingDeleteSticker && (
+        <div className="fixed inset-0 z-[1700] flex items-center justify-center p-4 bg-black/60 backdrop-blur-md">
+          <div className="w-full max-w-sm bg-white dark:bg-slate-900 border border-pink-100 dark:border-white/10 rounded-none sm:rounded-3xl p-6 shadow-2xl">
+            <h3 className="text-lg sm:text-xl font-black text-slate-900 dark:text-slate-100">Xác nhận xóa nhãn dán</h3>
+            <p className="mt-2 text-sm text-slate-600 dark:text-slate-300">Nhãn dán sẽ bị xóa vĩnh viễn khỏi thư viện và không thể khôi phục.</p>
+            <div className="mt-5 grid grid-cols-2 gap-3">
+              <button
+                type="button"
+                onClick={() => setPendingDeleteSticker(null)}
+                className="h-11 rounded-xl bg-slate-100 dark:bg-white/10 text-slate-700 dark:text-slate-200 font-semibold"
+              >Hủy</button>
+              <button
+                type="button"
+                onClick={confirmDeleteSticker}
+                className="h-11 rounded-xl bg-rose-500 text-white font-bold"
+              >Xóa</button>
+            </div>
+          </div>
         </div>
       )}
 
