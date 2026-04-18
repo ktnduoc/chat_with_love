@@ -328,7 +328,7 @@ const App: React.FC = () => {
         <div className={cn(
           "fixed md:relative inset-y-0 left-0 w-full lg:w-96 lg:max-w-[420px] flex-shrink-0 bg-[var(--bg-sidebar)] backdrop-blur-2xl border-r border-pink-100 dark:border-slate-800 flex flex-col shadow-2xl z-[1400] transition-all duration-700 overflow-hidden",
           isFocusedMode
-            ? "-translate-x-full opacity-0 md:w-0 md:border-none"
+            ? "-translate-x-full opacity-0 md:w-0 lg:w-0 lg:max-w-0 md:border-none pointer-events-none"
             : (isMobileSidebarOpen ? "translate-x-0" : "-translate-x-full md:translate-x-0")
         )}>
           <div className="flex flex-col h-full">
