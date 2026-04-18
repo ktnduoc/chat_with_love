@@ -1715,7 +1715,7 @@ export const ChatBox: React.FC<ChatBoxProps> = ({
                     className="flex items-center justify-center space-x-3 bg-gradient-to-r from-pink-500 to-rose-600 px-10 py-5 rounded-[2rem] text-white font-black text-xl shadow-2xl hover:scale-105 active:scale-95 transition-all shadow-pink-500/40 group"
                   >
                     <Download className="w-7 h-7 group-hover:animate-bounce" />
-                    <span>Cất giữ vào thư viện ❤️</span>
+                    <span>Lưu vào thư viện ❤️</span>
                   </button>
                 ) : (
                   <div className="bg-white/10 text-white/50 px-8 py-3 rounded-full font-bold flex items-center justify-center italic">
