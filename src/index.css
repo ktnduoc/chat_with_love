@@ -1,0 +1,165 @@
+@import "tailwindcss";
+
+:root {
+  font-family: 'Inter', system-ui, Avenir, Helvetica, Arial, sans-serif;
+  line-height: 1.5;
+  font-weight: 400;
+
+  /* LIGHT THEME VARIABLES */
+  --bg-main: #fff5f7;
+  --bg-sidebar: #ffffff;
+  --bg-chat: #fdf2f4;
+  --bg-card: #ffffff;
+  --bg-input: #ffffff;
+  --bg-header: #ffffff;
+  --bg-bubble-partner: #ffffff;
+  --text-main: #1f2937;
+  --text-muted: #6b7280;
+  --text-input: #1f2937;
+  --text-bubble-partner: #1f2937;
+  --border-color: #fce7f3;
+}
+
+.dark {
+  /* DARK THEME VARIABLES - DEEP NIGHT STYLE */
+  --bg-main: #020617;
+  --bg-sidebar: #0f172a;
+  --bg-chat: #020617;
+  --bg-card: #1e293b;
+  --bg-input: #0f172a;
+  --bg-header: #020617;
+  --bg-bubble-partner: #1e293b;
+  --text-main: #f8fafc;
+  --text-muted: #94a3b8;
+  --text-input: #ffffff;
+  --text-bubble-partner: #fdf2f4;
+  --border-color: #1e293b;
+  
+  color-scheme: dark;
+}
+
+body {
+  margin: 0;
+  padding: 0;
+  width: 100%;
+  height: 100dvh;
+  overflow: hidden;
+  background-color: transparent !important;
+  color: var(--text-main);
+}
+
+#root {
+  width: 100%;
+  height: 100dvh;
+  background-color: transparent !important;
+}
+
+/* Custom Scrollbar */
+.custom-scrollbar::-webkit-scrollbar {
+  width: 6px;
+}
+
+.custom-scrollbar::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+.custom-scrollbar::-webkit-scrollbar-thumb {
+  background: #cbd5e1;
+  border-radius: 10px;
+}
+
+.dark .custom-scrollbar::-webkit-scrollbar-thumb {
+  background: #334155;
+}
+
+.custom-scrollbar::-webkit-scrollbar-thumb:hover {
+  background: #94a3b8;
+}
+
+/* Global Transition */
+* {
+  transition: background-color 0.3s ease, color 0.3s ease, border-color 0.3s ease;
+}
+
+/* Heart Message Effect */
+@keyframes floating-heart {
+  0%, 100% { transform: translateY(0) scale(1); }
+  50% { transform: translateY(-15px) scale(1.02); }
+}
+
+.heart-bubble {
+  position: relative;
+  color: white !important;
+  display: inline-flex !important;
+  align-items: center;
+  justify-content: center;
+  text-align: center;
+  padding: 60px 80px !important;
+  min-width: 280px;
+  min-height: 250px;
+  max-width: 450px;
+  background: transparent !important;
+  box-shadow: none !important;
+  word-break: break-all;
+  white-space: pre-wrap;
+  font-size: 16px;
+  line-height: 1.4;
+  z-index: 1;
+  animation: floating-heart 4s ease-in-out infinite;
+}
+
+.heart-bubble::before {
+  content: '';
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  width: 120%;
+  height: 120%;
+  transform: translate(-50%, -50%);
+  background: linear-gradient(135deg, #ff4c68 0%, #ff1e56 100%);
+  z-index: -1;
+  box-shadow: 0 15px 35px rgba(255, 30, 86, 0.4);
+  -webkit-mask-image: url('data:image/svg+xml;utf8,<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12,21.3c-0.5,0-4-2.5-7.5-5.5C1.5,13.5,0,10.5,0,7.5c0-4,3-6.5,6.5-6.5C8.5,1,10.5,2,12,4c1.5-2,3.5-3,5.5-3c3.5,0,6.5,2.5,6.5,6.5c0,3-1.5,6-4.5,8.3C16,18.8,12.5,21.3,12,21.3z"/></svg>');
+  -webkit-mask-size: 100% 100%;
+  -webkit-mask-repeat: no-repeat;
+  mask-image: url('data:image/svg+xml;utf8,<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12,21.3c-0.5,0-4-2.5-7.5-5.5C1.5,13.5,0,10.5,0,7.5c0-4,3-6.5,6.5-6.5C8.5,1,10.5,2,12,4c1.5-2,3.5-3,5.5-3c3.5,0,6.5,2.5,6.5,6.5c0,3-1.5,6-4.5,8.3C16,18.8,12.5,21.3,12,21.3z"/></svg>');
+  mask-size: 100% 100%;
+}
+
+/* 🧼 ULTIMATE ZERO-UI CLASS - Hard Transparency Enforcement */
+.immersion-clear-ui {
+  background: transparent !important;
+  background-color: transparent !important;
+  border: none !important;
+  border-width: 0 !important;
+  box-shadow: none !important;
+  backdrop-filter: none !important;
+}
+@keyframes float-up {
+  0% {
+    transform: translateY(0) rotate(0deg);
+    opacity: 0;
+  }
+  10% {
+    opacity: 0.8;
+  }
+  90% {
+    opacity: 0.8;
+  }
+  100% {
+    transform: translateY(-800px) rotate(20deg);
+    opacity: 0;
+  }
+}
+
+.animate-float-up {
+  animation: float-up linear infinite;
+}
+
+.twemoji-wrap img.emoji {
+  display: inline-block;
+  width: 1.15em;
+  height: 1.15em;
+  margin: 0 0.02em;
+  vertical-align: -0.2em;
+}
