@@ -1186,8 +1186,9 @@ export const ChatBox: React.FC<ChatBoxProps> = ({
       <div 
         className={cn(
           "p-3 sm:p-4 md:p-6 z-40 transition-all duration-1000 w-full",
-          isFocusedMode ? "immersion-clear-ui py-14" : cn("border-t-[1.5px] border-pink-400/40 dark:border-rose-500/20 shadow-[0_-5px_20px_rgba(0,0,0,0.05)] bg-gradient-to-r backdrop-blur-md", theme?.header || 'from-pink-500/10 to-rose-500/10')
+          isFocusedMode ? "immersion-clear-ui py-6 sm:py-14" : cn("border-t-[1.5px] border-pink-400/40 dark:border-rose-500/20 shadow-[0_-5px_20px_rgba(0,0,0,0.05)] bg-gradient-to-r backdrop-blur-md", theme?.header || 'from-pink-500/10 to-rose-500/10')
         )}
+        style={{ paddingBottom: 'calc(env(safe-area-inset-bottom, 0px) + 0.5rem)' }}
       >
         <div className={cn("max-w-4xl mx-auto flex flex-col space-y-4", isFocusedMode ? "immersion-clear-ui" : "")}>
           {/* Sticker Ribbon */}
