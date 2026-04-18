@@ -1026,7 +1026,7 @@ export const ChatBox: React.FC<ChatBoxProps> = ({
 
           {/* Input Wrapper - Glassmorphism in Focus Mode */}
           <div className={cn(
-            "flex items-center space-x-2 rounded-[3rem] p-2 pr-4 relative transition-all duration-700",
+            "flex items-center gap-1.5 sm:gap-2 rounded-[2.25rem] sm:rounded-[3rem] p-1.5 sm:p-2 pr-2 sm:pr-4 relative transition-all duration-700",
             isFocusedMode 
               ? "bg-white/5 backdrop-blur-2xl border border-white/20 shadow-[0_0_20px_rgba(236,72,153,0.15)]" 
               : "bg-[var(--bg-input)] border border-pink-100 dark:border-slate-800 shadow-inner"
@@ -1037,7 +1037,7 @@ export const ChatBox: React.FC<ChatBoxProps> = ({
                 onClick={() => setShowSendActions(prev => !prev)}
                 disabled={isUploading}
                 className={cn(
-                  "w-12 h-12 rounded-full flex items-center justify-center transition-all border",
+                  "w-10 h-10 sm:w-12 sm:h-12 rounded-full flex items-center justify-center transition-all border shrink-0",
                   isUploading
                     ? "bg-slate-100 text-slate-300 border-slate-200 cursor-not-allowed"
                     : isFocusedMode
@@ -1116,7 +1116,7 @@ export const ChatBox: React.FC<ChatBoxProps> = ({
             </div>
 
             <div className={cn(
-              "flex-1 relative flex items-center px-2 py-1.5 rounded-[2rem] border group transition-all",
+              "flex-1 min-w-0 relative flex items-center px-1.5 sm:px-2 py-1.5 rounded-[1.6rem] sm:rounded-[2rem] border group transition-all",
               isFocusedMode
                 ? (isComposerFocused
                     ? "bg-white/85 border-white/80 focus-within:ring-2 focus-within:ring-white/70"
@@ -1132,7 +1132,7 @@ export const ChatBox: React.FC<ChatBoxProps> = ({
                 onKeyDown={(e) => e.key === 'Enter' && handleSend()} 
                 placeholder={sentFlyingMessages.length >= 3 ? "Chờ người thương mở tim nhé... ❤️" : "Nhắn lời thương..."}
                 className={cn(
-                  "flex-1 bg-transparent border-none outline-none font-medium px-4 py-2",
+                  "flex-1 min-w-0 bg-transparent border-none outline-none font-medium px-2 sm:px-4 py-2 text-sm sm:text-base",
                   isFocusedMode
                     ? (isComposerFocused
                         ? "text-slate-900 placeholder:text-slate-500"
@@ -1152,11 +1152,11 @@ export const ChatBox: React.FC<ChatBoxProps> = ({
               onClick={() => handleSend()}
               disabled={!text.trim() || isUploading}
               className={cn(
-                "shrink-0 min-w-[56px] h-12 sm:min-w-[48px] sm:w-12 rounded-full px-3 sm:px-0 flex items-center justify-center transition-all bg-gradient-to-tr from-pink-500 to-rose-600 text-white shadow-lg shadow-pink-500/50 active:scale-90",
+                "shrink-0 w-10 h-10 sm:min-w-[48px] sm:w-12 sm:h-12 rounded-full px-0 flex items-center justify-center transition-all bg-gradient-to-tr from-pink-500 to-rose-600 text-white shadow-lg shadow-pink-500/50 active:scale-90",
                 (!text.trim() || isUploading) ? "grayscale opacity-50 cursor-not-allowed" : "hover:scale-105"
               )}
             >
-               <Send className="w-5 h-5 ml-0.5" />
+               <Send className="w-4 h-4 sm:w-5 sm:h-5 ml-0.5" />
             </button>
           </div>
         </div>
