@@ -126,6 +126,7 @@ const App: React.FC = () => {
 
   const [isFocusedMode, setIsFocusedMode] = useState(false);
   const [isMobileSidebarOpen, setIsMobileSidebarOpen] = useState(false);
+  const [appViewportHeight, setAppViewportHeight] = useState<number | null>(null);
 
   const toggleFocusedMode = () => {
     setIsFocusedMode(prev => !prev);
@@ -173,6 +174,28 @@ const App: React.FC = () => {
       document.documentElement.classList.remove('dark');
       document.documentElement.style.colorScheme = 'light';
     }
+  }, []);
+
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+
+    const vv = window.visualViewport;
+    const updateViewportHeight = () => {
+      const nextHeight = vv?.height ?? window.innerHeight;
+      setAppViewportHeight(nextHeight);
+    };
+
+    updateViewportHeight();
+
+    vv?.addEventListener('resize', updateViewportHeight);
+    vv?.addEventListener('scroll', updateViewportHeight);
+    window.addEventListener('orientationchange', updateViewportHeight);
+
+    return () => {
+      vv?.removeEventListener('resize', updateViewportHeight);
+      vv?.removeEventListener('scroll', updateViewportHeight);
+      window.removeEventListener('orientationchange', updateViewportHeight);
+    };
   }, []);
 
   useEffect(() => {
@@ -312,9 +335,10 @@ const App: React.FC = () => {
       )}
 
       <div className={cn(
-        "flex w-full h-[100dvh] text-gray-900 dark:text-gray-100 font-sans overflow-hidden transition-colors duration-500 relative z-10",
+        "flex w-full text-gray-900 dark:text-gray-100 font-sans overflow-hidden transition-colors duration-500 relative z-10",
         (customBg || isFocusedMode) ? "bg-transparent" : "bg-[var(--bg-main)]"
-      )}>
+      )}
+      style={{ height: appViewportHeight ? `${appViewportHeight}px` : '100dvh' }}>
         {isMobileSidebarOpen && !isFocusedMode && (
           <button
             type="button"

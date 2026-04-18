@@ -866,7 +866,7 @@ export const ChatBox: React.FC<ChatBoxProps> = ({
 
       {/* Header with Dynamic Theme Gradient - Hidden in Focus Mode */}
       <div className={cn(
-        "flex items-center justify-between px-4 sm:px-6 md:px-10 z-[1200] transition-all duration-1000 overflow-visible",
+        "sticky top-0 flex items-center justify-between px-4 sm:px-6 md:px-10 z-[1200] transition-all duration-1000 overflow-visible",
         isFocusedMode ? "h-0 opacity-0 pointer-events-none" : cn("py-5 border-b border-pink-100 dark:border-slate-800 shadow-md bg-gradient-to-r", theme?.header || 'from-pink-500/10 to-rose-500/10')
       )}>
         <div className="flex items-center space-x-3 sm:space-x-4 md:space-x-6">
@@ -1388,7 +1388,7 @@ export const ChatBox: React.FC<ChatBoxProps> = ({
                 onKeyDown={(e) => e.key === 'Enter' && handleSend()} 
                 placeholder={sentFlyingMessages.length >= 3 ? "Chờ người thương mở tim nhé... ❤️" : "Nhắn lời thương..."}
                 className={cn(
-                  "flex-1 min-w-0 bg-transparent border-none outline-none font-medium px-2 sm:px-4 py-2 text-sm sm:text-base",
+                  "flex-1 min-w-0 bg-transparent border-none outline-none font-medium px-2 sm:px-4 py-2 text-base",
                   isFocusedMode
                     ? (isComposerFocused
                         ? "text-slate-900 placeholder:text-slate-500"
