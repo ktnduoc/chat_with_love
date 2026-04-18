@@ -125,7 +125,12 @@ export const ChatBox: React.FC<ChatBoxProps> = ({
   const [pendingDeleteSticker, setPendingDeleteSticker] = useState<Sticker | null>(null);
   const [sendButtonCoords, setSendButtonCoords] = useState<{ x: string; y: string }>({ x: '80%', y: '80%' });
   const [renderWindowEnd, setRenderWindowEnd] = useState(0);
+  const [touchDragPosition, setTouchDragPosition] = useState<{ x: number; y: number } | null>(null);
   const typingTimeoutRef = useRef<number | undefined>(undefined);
+  const trashZoneRef = useRef<HTMLDivElement>(null);
+  const touchDragStartRef = useRef<{ x: number; y: number } | null>(null);
+  const touchDragMovedRef = useRef(false);
+  const suppressNextStickerClickRef = useRef(false);
 
   const { messages, setMessages, hasMore, sendMessage, openMessage, uploadImage, saveAsSticker, loadMore, setTypingStatus } = useChat(currentUser.id, receiver.id, false);
 
@@ -285,6 +290,63 @@ export const ChatBox: React.FC<ChatBoxProps> = ({
   const handleStickerDragEnd = () => {
     setDraggingStickerId(null);
     setIsOverTrashZone(false);
+  };
+
+  const handleStickerTouchStart = (stickerId: string, e: React.TouchEvent<HTMLDivElement>) => {
+    const touch = e.touches[0];
+    if (!touch) return;
+    setDraggingStickerId(stickerId);
+    setIsOverTrashZone(false);
+    setTouchDragPosition({ x: touch.clientX, y: touch.clientY });
+    touchDragStartRef.current = { x: touch.clientX, y: touch.clientY };
+    touchDragMovedRef.current = false;
+  };
+
+  const handleStickerTouchMove = (e: React.TouchEvent<HTMLDivElement>) => {
+    if (!draggingStickerId) return;
+    const touch = e.touches[0];
+    if (!touch) return;
+
+    const start = touchDragStartRef.current;
+    if (start) {
+      const dx = touch.clientX - start.x;
+      const dy = touch.clientY - start.y;
+      if (!touchDragMovedRef.current && Math.hypot(dx, dy) > 12) {
+        touchDragMovedRef.current = true;
+      }
+    }
+
+    setTouchDragPosition({ x: touch.clientX, y: touch.clientY });
+
+    const trashRect = trashZoneRef.current?.getBoundingClientRect();
+    if (!trashRect) return;
+
+    const isInsideTrash =
+      touch.clientX >= trashRect.left &&
+      touch.clientX <= trashRect.right &&
+      touch.clientY >= trashRect.top &&
+      touch.clientY <= trashRect.bottom;
+
+    setIsOverTrashZone(isInsideTrash);
+  };
+
+  const handleStickerTouchEnd = () => {
+    if (!draggingStickerId) return;
+
+    const target = stickers.find(s => s.id === draggingStickerId);
+    if (isOverTrashZone && target) {
+      setPendingDeleteSticker(target);
+      suppressNextStickerClickRef.current = true;
+    } else if (touchDragMovedRef.current) {
+      // User dragged but did not drop into trash: do not treat this as a sticker send tap.
+      suppressNextStickerClickRef.current = true;
+    }
+
+    setDraggingStickerId(null);
+    setIsOverTrashZone(false);
+    setTouchDragPosition(null);
+    touchDragStartRef.current = null;
+    touchDragMovedRef.current = false;
   };
 
   const handleDropToTrash = async (e: React.DragEvent<HTMLDivElement>) => {
@@ -1423,7 +1485,15 @@ export const ChatBox: React.FC<ChatBoxProps> = ({
                          draggable
                          onDragStart={(e) => handleStickerDragStart(s.id, e)}
                          onDragEnd={handleStickerDragEnd}
+                         onTouchStart={(e) => handleStickerTouchStart(s.id, e)}
+                         onTouchMove={handleStickerTouchMove}
+                         onTouchEnd={handleStickerTouchEnd}
+                         onTouchCancel={handleStickerTouchEnd}
                          onClick={() => { 
+                           if (suppressNextStickerClickRef.current) {
+                             suppressNextStickerClickRef.current = false;
+                             return;
+                           }
                            sendMessage('', s.image_url); 
                            setShowStickers(false); 
                            fetchStickers(); 
@@ -1440,6 +1510,7 @@ export const ChatBox: React.FC<ChatBoxProps> = ({
 
               <div className="px-6 pb-6 pt-3 border-t border-pink-100/70 dark:border-white/10 bg-white/70 dark:bg-black/20 backdrop-blur-sm">
                 <div
+                  ref={trashZoneRef}
                   onDragOver={(e) => {
                     e.preventDefault();
                     e.dataTransfer.dropEffect = 'move';
@@ -1460,6 +1531,15 @@ export const ChatBox: React.FC<ChatBoxProps> = ({
                   </span>
                 </div>
               </div>
+
+              {touchDragPosition && draggingStickerId && (
+                <div
+                  className="pointer-events-none fixed z-[1750] -translate-x-1/2 -translate-y-1/2 rounded-full bg-rose-500/90 text-white px-3 py-1 text-[10px] font-black uppercase tracking-wide shadow-xl"
+                  style={{ left: touchDragPosition.x, top: touchDragPosition.y }}
+                >
+                  Đang kéo
+                </div>
+              )}
            </div>
         </div>
       )}

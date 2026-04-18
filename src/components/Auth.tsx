@@ -105,7 +105,7 @@ export const Auth: React.FC<{ onLogin: () => void }> = ({ onLogin }) => {
                 <Loader2 className="w-6 h-6 animate-spin" />
               ) : (
                 <>
-                  <span className="uppercase tracking-[0.2em] italic mr-2">Mở cánh cửa tình yêu</span>
+                  <span className="uppercase tracking-[0.2em] italic mr-2">Vào ngay ❤❤</span>
                   <ArrowRight className="w-5 h-5 group-hover/btn:translate-x-2 transition-transform" />
                 </>
               )}
