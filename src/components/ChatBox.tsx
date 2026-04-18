@@ -663,21 +663,34 @@ export const ChatBox: React.FC<ChatBoxProps> = ({
         </div>
 
         {/* Header Actions Dropdown */}
-        <div className="relative">
+        <div className="flex items-center gap-2">
           <button
             type="button"
-            onClick={() => setShowHeaderActions(prev => !prev)}
+            onClick={() => window.location.reload()}
             className={cn(
               "p-3 rounded-2xl backdrop-blur-md border shadow-lg hover:scale-105 active:scale-95 transition-all",
               isFocusedMode ? "bg-white/10 text-white border-white/20" : "bg-white/40 dark:bg-white/5 text-pink-500 border-white/20"
             )}
-            title="Tùy chọn"
+            title="Làm mới"
           >
-            <ChevronDown className="w-5 h-5" />
+            <RefreshCw className="w-5 h-5" />
           </button>
 
-          {showHeaderActions && (
-            <div className="absolute top-14 right-0 z-[1300] w-[260px] rounded-2xl border border-pink-100 dark:border-white/10 bg-white/95 dark:bg-slate-900/95 backdrop-blur-xl shadow-2xl p-3">
+          <div className="relative">
+            <button
+              type="button"
+              onClick={() => setShowHeaderActions(prev => !prev)}
+              className={cn(
+                "p-3 rounded-2xl backdrop-blur-md border shadow-lg hover:scale-105 active:scale-95 transition-all",
+                isFocusedMode ? "bg-white/10 text-white border-white/20" : "bg-white/40 dark:bg-white/5 text-pink-500 border-white/20"
+              )}
+              title="Tùy chọn"
+            >
+              <ChevronDown className="w-5 h-5" />
+            </button>
+
+            {showHeaderActions && (
+              <div className="absolute top-14 right-0 z-[1300] w-[260px] rounded-2xl border border-pink-100 dark:border-white/10 bg-white/95 dark:bg-slate-900/95 backdrop-blur-xl shadow-2xl p-3">
               <div className="grid grid-cols-3 gap-2">
                 <button
                   type="button"
@@ -745,8 +758,9 @@ export const ChatBox: React.FC<ChatBoxProps> = ({
                   <span className="text-[10px] font-bold leading-tight text-center">Bảo tàng</span>
                 </button>
               </div>
-            </div>
-          )}
+              </div>
+            )}
+          </div>
         </div>
       </div>
 
