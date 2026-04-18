@@ -1152,7 +1152,7 @@ export const ChatBox: React.FC<ChatBoxProps> = ({
               onClick={() => handleSend()}
               disabled={!text.trim() || isUploading}
               className={cn(
-                "w-12 h-12 rounded-full flex items-center justify-center transition-all bg-gradient-to-tr from-pink-500 to-rose-600 text-white shadow-lg shadow-pink-500/50 active:scale-90",
+                "shrink-0 min-w-[56px] h-12 sm:min-w-[48px] sm:w-12 rounded-full px-3 sm:px-0 flex items-center justify-center transition-all bg-gradient-to-tr from-pink-500 to-rose-600 text-white shadow-lg shadow-pink-500/50 active:scale-90",
                 (!text.trim() || isUploading) ? "grayscale opacity-50 cursor-not-allowed" : "hover:scale-105"
               )}
             >
