@@ -46,16 +46,16 @@ const App: React.FC = () => {
   const [themeIndex, setThemeIndex] = useState(0);
 
   const themes = [
-    { name: 'Rose', header: 'from-rose-500/10 to-pink-500/10', sidebar: 'from-rose-500/10 to-pink-500/10', chat: 'bg-rose-50/40 dark:bg-rose-950/20', accent: 'text-rose-500', glow: 'bg-rose-400/20', pattern: 'hearts' },
-    { name: 'Lavender', header: 'from-purple-500/10 to-indigo-500/10', sidebar: 'from-purple-500/10 to-indigo-500/10', chat: 'bg-purple-50/40 dark:bg-purple-950/20', accent: 'text-purple-500', glow: 'bg-purple-400/20', pattern: 'stars' },
-    { name: 'Aurora', header: 'from-emerald-400/10 to-cyan-500/10', sidebar: 'from-emerald-400/10 to-cyan-500/10', chat: 'bg-emerald-50/40 dark:bg-emerald-950/20', accent: 'text-emerald-500', glow: 'bg-emerald-400/20', pattern: 'clouds' },
-    { name: 'Sunset', header: 'from-orange-500/10 to-rose-600/10', sidebar: 'from-orange-500/10 to-rose-600/10', chat: 'bg-orange-50/40 dark:bg-orange-950/20', accent: 'text-orange-500', glow: 'bg-orange-400/20', pattern: 'bubbles' },
-    { name: 'Midnight', header: 'from-slate-800/40 to-slate-900/40', sidebar: 'from-slate-800/40 to-slate-900/40', chat: 'bg-slate-900 dark:bg-slate-950', accent: 'text-amber-400', glow: 'bg-amber-400/10', pattern: 'diamonds' },
-    { name: 'Ocean', header: 'from-blue-600/10 to-cyan-400/10', sidebar: 'from-blue-600/10 to-cyan-400/10', chat: 'bg-blue-50/40 dark:bg-blue-950/20', accent: 'text-blue-500', glow: 'bg-blue-400/20', pattern: 'waves' },
-    { name: 'Cherry', header: 'from-pink-600/10 to-rose-400/10', sidebar: 'from-pink-600/10 to-rose-400/10', chat: 'bg-pink-50/50 dark:bg-pink-950/30', accent: 'text-pink-500', glow: 'bg-pink-400/20', pattern: 'sakura' },
-    { name: 'Forest', header: 'from-green-600/10 to-emerald-400/10', sidebar: 'from-green-600/10 to-emerald-400/10', chat: 'bg-green-50/40 dark:bg-green-950/20', accent: 'text-green-500', glow: 'bg-green-400/20', pattern: 'leaves' },
-    { name: 'Gold', header: 'from-yellow-400/10 to-amber-600/10', sidebar: 'from-yellow-400/10 to-amber-600/10', chat: 'bg-amber-50/40 dark:bg-stone-900/40', accent: 'text-amber-500', glow: 'bg-amber-400/20', pattern: 'geometry' },
-    { name: 'Space', header: 'from-indigo-900/40 to-purple-900/40', sidebar: 'from-indigo-900/40 to-purple-900/40', chat: 'bg-black/90 dark:bg-black', accent: 'text-purple-400', glow: 'bg-indigo-500/20', pattern: 'stars' },
+    { name: 'Rose', header: 'from-rose-500/25 to-pink-500/25', sidebar: 'from-rose-500/25 to-pink-500/25', chat: 'bg-rose-100/70 dark:bg-rose-950/45', accent: 'text-rose-500', glow: 'bg-rose-400/35', pattern: 'hearts' },
+    { name: 'Lavender', header: 'from-purple-500/25 to-indigo-500/25', sidebar: 'from-purple-500/25 to-indigo-500/25', chat: 'bg-purple-100/70 dark:bg-purple-950/45', accent: 'text-purple-500', glow: 'bg-purple-400/35', pattern: 'stars' },
+    { name: 'Aurora', header: 'from-emerald-400/25 to-cyan-500/25', sidebar: 'from-emerald-400/25 to-cyan-500/25', chat: 'bg-emerald-100/70 dark:bg-emerald-950/45', accent: 'text-emerald-500', glow: 'bg-emerald-400/35', pattern: 'clouds' },
+    { name: 'Sunset', header: 'from-orange-500/25 to-rose-600/25', sidebar: 'from-orange-500/25 to-rose-600/25', chat: 'bg-orange-100/70 dark:bg-orange-950/45', accent: 'text-orange-500', glow: 'bg-orange-400/35', pattern: 'bubbles' },
+    { name: 'Midnight', header: 'from-slate-800/65 to-slate-900/65', sidebar: 'from-slate-800/65 to-slate-900/65', chat: 'bg-slate-900/95 dark:bg-slate-950', accent: 'text-amber-400', glow: 'bg-amber-400/25', pattern: 'diamonds' },
+    { name: 'Ocean', header: 'from-blue-600/25 to-cyan-400/25', sidebar: 'from-blue-600/25 to-cyan-400/25', chat: 'bg-blue-100/70 dark:bg-blue-950/45', accent: 'text-blue-500', glow: 'bg-blue-400/35', pattern: 'waves' },
+    { name: 'Cherry', header: 'from-pink-600/25 to-rose-400/25', sidebar: 'from-pink-600/25 to-rose-400/25', chat: 'bg-pink-100/70 dark:bg-pink-950/50', accent: 'text-pink-500', glow: 'bg-pink-400/35', pattern: 'sakura' },
+    { name: 'Forest', header: 'from-green-600/25 to-emerald-400/25', sidebar: 'from-green-600/25 to-emerald-400/25', chat: 'bg-green-100/70 dark:bg-green-950/45', accent: 'text-green-500', glow: 'bg-green-400/35', pattern: 'leaves' },
+    { name: 'Gold', header: 'from-yellow-400/25 to-amber-600/25', sidebar: 'from-yellow-400/25 to-amber-600/25', chat: 'bg-amber-100/70 dark:bg-stone-900/55', accent: 'text-amber-500', glow: 'bg-amber-400/35', pattern: 'geometry' },
+    { name: 'Space', header: 'from-indigo-900/70 to-purple-900/70', sidebar: 'from-indigo-900/70 to-purple-900/70', chat: 'bg-black/95 dark:bg-black', accent: 'text-purple-400', glow: 'bg-indigo-500/35', pattern: 'stars' },
   ];
 
   const currentTheme = themes[themeIndex];
@@ -240,10 +240,16 @@ const App: React.FC = () => {
   const handleAvatarChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file || !currentUser) return;
+
+    // Close source modal right after user picks a file.
+    setShowAvatarSourceModal(false);
     setIsUpdatingAvatar(true);
+
     const url = await uploadImage(file);
     if (url) await updateProfile({ avatar_url: url });
+
     setIsUpdatingAvatar(false);
+    e.currentTarget.value = '';
   };
 
   const handleStartEditingName = () => {
