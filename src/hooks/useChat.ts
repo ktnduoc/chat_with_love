@@ -25,6 +25,7 @@ export function useChat(currentUserId: string, receiverId?: string, isGlobalPres
   
   const presenceChannelRef = useRef<any>(null);
   const isPresenceSubscribed = useRef(false);
+  const heartbeatTimerRef = useRef<number | null>(null);
 
   useEffect(() => {
     if (!currentUserId || !receiverId) {
@@ -122,31 +123,45 @@ export function useChat(currentUserId: string, receiverId?: string, isGlobalPres
           isPresenceSubscribed.current = true;
           try {
             await channel.track({ online_at: new Date().toISOString(), isTyping: false });
+            rebuildPresenceState();
+
+            if (heartbeatTimerRef.current) {
+              window.clearInterval(heartbeatTimerRef.current);
+            }
+            heartbeatTimerRef.current = window.setInterval(() => {
+              channel.track({ online_at: new Date().toISOString(), isTyping: false }).catch(() => {
+                // silent fail
+              });
+            }, 20000);
           } catch (e) {
             // silent fail
           }
+        } else if (status === 'CHANNEL_ERROR' || status === 'TIMED_OUT' || status === 'CLOSED') {
+          isPresenceSubscribed.current = false;
         }
       });
 
     return () => {
       isPresenceSubscribed.current = false;
+      if (heartbeatTimerRef.current) {
+        window.clearInterval(heartbeatTimerRef.current);
+        heartbeatTimerRef.current = null;
+      }
       presenceChannelRef.current = null;
       supabase.removeChannel(channel);
     };
   }, [currentUserId, isGlobalPresence]);
 
   const setTypingStatus = async (isTyping: boolean) => {
-    if (!currentUserId || !presenceChannelRef.current || !isPresenceSubscribed.current) return;
-    
-    if (presenceChannelRef.current.state === 'joined') {
-      try {
-        await presenceChannelRef.current.track({ 
-          online_at: new Date().toISOString(), 
-          isTyping 
-        });
-      } catch (err) {
-        // silent fail
-      }
+    if (!currentUserId || !presenceChannelRef.current) return;
+
+    try {
+      await presenceChannelRef.current.track({
+        online_at: new Date().toISOString(),
+        isTyping
+      });
+    } catch (err) {
+      // silent fail
     }
   };
 

@@ -129,6 +129,8 @@ export const ChatBox: React.FC<ChatBoxProps> = ({
   const [renderWindowEnd, setRenderWindowEnd] = useState(0);
   const [touchDragPosition, setTouchDragPosition] = useState<{ x: number; y: number } | null>(null);
   const typingTimeoutRef = useRef<number | undefined>(undefined);
+  const partnerTypingTimeoutRef = useRef<number | undefined>(undefined);
+  const typingBroadcastChannelRef = useRef<any>(null);
   const trashZoneRef = useRef<HTMLDivElement>(null);
   const touchDragStartRef = useRef<{ x: number; y: number } | null>(null);
   const touchDragMovedRef = useRef(false);
@@ -215,8 +217,63 @@ export const ChatBox: React.FC<ChatBoxProps> = ({
   const sendButtonRef = useRef<HTMLButtonElement>(null);
   const notificationAudioRef = useRef<HTMLAudioElement>(null);
   const prevIsOnline = useRef<boolean>(isOnline);
+  const [isPartnerTypingBroadcast, setIsPartnerTypingBroadcast] = useState(false);
 
-  const isOtherTyping = typingUsers[receiver.id];
+  const isOtherTyping = typingUsers[receiver.id] || isPartnerTypingBroadcast;
+
+  const conversationTypingKey = [currentUser.id, receiver.id].sort().join('-');
+
+  const broadcastTypingStatus = async (isTyping: boolean) => {
+    const channel = typingBroadcastChannelRef.current;
+    if (!channel) return;
+    if (channel.state !== 'joined') return;
+    try {
+      await channel.send({
+        type: 'broadcast',
+        event: 'TYPING',
+        payload: {
+          senderId: currentUser.id,
+          receiverId: receiver.id,
+          isTyping,
+          at: Date.now()
+        }
+      });
+    } catch (_e) {
+      // silent fail
+    }
+  };
+
+  useEffect(() => {
+    const channel = supabase.channel(`typing-${conversationTypingKey}`)
+      .on('broadcast', { event: 'TYPING' }, ({ payload }) => {
+        const data = payload as { senderId?: string; receiverId?: string; isTyping?: boolean };
+        if (data.senderId !== receiver.id || data.receiverId !== currentUser.id) return;
+
+        const typing = Boolean(data.isTyping);
+        setIsPartnerTypingBroadcast(typing);
+
+        if (partnerTypingTimeoutRef.current) {
+          window.clearTimeout(partnerTypingTimeoutRef.current);
+        }
+
+        if (typing) {
+          partnerTypingTimeoutRef.current = window.setTimeout(() => {
+            setIsPartnerTypingBroadcast(false);
+          }, 2600);
+        }
+      })
+      .subscribe();
+
+    typingBroadcastChannelRef.current = channel;
+
+    return () => {
+      if (partnerTypingTimeoutRef.current) {
+        window.clearTimeout(partnerTypingTimeoutRef.current);
+      }
+      typingBroadcastChannelRef.current = null;
+      supabase.removeChannel(channel);
+    };
+  }, [conversationTypingKey, currentUser.id, receiver.id]);
 
   const handleBubbleClick = (e: React.MouseEvent) => {
     console.log('✨ [Interaction] Bubble clicked, triggering HeartPop at:', e.clientX, e.clientY);
@@ -466,19 +523,33 @@ export const ChatBox: React.FC<ChatBoxProps> = ({
        setShowStickerRibbon(true);
        setText(''); // Clear input
        pushTypingStatus(false);
+       broadcastTypingStatus(false);
        return;
     }
 
      pushTypingStatus(true);
+     broadcastTypingStatus(true);
     if (typingTimeoutRef.current) clearTimeout(typingTimeoutRef.current);
     typingTimeoutRef.current = window.setTimeout(() => {
        pushTypingStatus(false);
+       broadcastTypingStatus(false);
     }, 2000);
+  };
+
+  const handleComposerBlur = () => {
+    setIsComposerFocused(false);
+    if (typingTimeoutRef.current) {
+      clearTimeout(typingTimeoutRef.current);
+      typingTimeoutRef.current = undefined;
+    }
+    pushTypingStatus(false);
+    broadcastTypingStatus(false);
   };
 
   const handleSend = async (sizeOverride?: number) => {
     if (text.trim() || sizeOverride) {
       pushTypingStatus(false);
+      broadcastTypingStatus(false);
       const effectValue = sizeOverride ? `heart:${sizeOverride}` : 'none';
       await sendMessage(text, undefined, effectValue);
       setText('');
@@ -1175,9 +1246,6 @@ export const ChatBox: React.FC<ChatBoxProps> = ({
                 <span className="typing-dot" />
                 <span className="typing-dot" />
                </div>
-               <div className="flex flex-col">
-                  <span className="text-[10px] font-black text-pink-400 uppercase tracking-widest italic">{receiver.username} đang soạn tin... 🎀</span>
-               </div>
             </div>
           )}
         </div>
@@ -1316,7 +1384,7 @@ export const ChatBox: React.FC<ChatBoxProps> = ({
                 value={text} 
                 onChange={handleInputChange} 
                 onFocus={() => setIsComposerFocused(true)}
-                onBlur={() => setIsComposerFocused(false)}
+                onBlur={handleComposerBlur}
                 onKeyDown={(e) => e.key === 'Enter' && handleSend()} 
                 placeholder={sentFlyingMessages.length >= 3 ? "Chờ người thương mở tim nhé... ❤️" : "Nhắn lời thương..."}
                 className={cn(
