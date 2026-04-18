@@ -107,7 +107,9 @@ export const ChatBox: React.FC<ChatBoxProps> = ({
   const [isBgUpload, setIsBgUpload] = useState(false);
   const [showSpaceSettings, setShowSpaceSettings] = useState(false);
   const [showBgSourceModal, setShowBgSourceModal] = useState(false);
+  const [showImageSourceModal, setShowImageSourceModal] = useState(false);
   const [bgLinkInput, setBgLinkInput] = useState('');
+  const [imageLinkInput, setImageLinkInput] = useState('');
   const [showMemorySidebar, setShowMemorySidebar] = useState(false);
   const [memoryTab, setMemoryTab] = useState<'media' | 'links' | 'search'>('media');
   const [searchQuery, setSearchQuery] = useState('');
@@ -193,6 +195,7 @@ export const ChatBox: React.FC<ChatBoxProps> = ({
   }, [messages, currentUser.id]);
   const viewportRef = useRef<HTMLDivElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const emojiPickerRef = useRef<HTMLDivElement>(null);
   const sendButtonRef = useRef<HTMLButtonElement>(null);
   const notificationAudioRef = useRef<HTMLAudioElement>(null);
   const prevIsOnline = useRef<boolean>(isOnline);
@@ -552,6 +555,25 @@ export const ChatBox: React.FC<ChatBoxProps> = ({
     };
   }, [isFocusedMode]);
 
+  useEffect(() => {
+    if (!showEmoji) return;
+
+    const handleOutsideClick = (event: MouseEvent | TouchEvent) => {
+      const target = event.target as Node;
+      if (emojiPickerRef.current && !emojiPickerRef.current.contains(target)) {
+        setShowEmoji(false);
+      }
+    };
+
+    document.addEventListener('mousedown', handleOutsideClick);
+    document.addEventListener('touchstart', handleOutsideClick);
+
+    return () => {
+      document.removeEventListener('mousedown', handleOutsideClick);
+      document.removeEventListener('touchstart', handleOutsideClick);
+    };
+  }, [showEmoji]);
+
   return (
     <div 
       className={cn(
@@ -588,16 +610,16 @@ export const ChatBox: React.FC<ChatBoxProps> = ({
       )}
 
       {previewUrl && (
-        <div className="absolute inset-0 z-[300] bg-black/60 backdrop-blur-md flex items-center justify-center p-4">
-          <div className="bg-white dark:bg-slate-800 rounded-none p-8 max-w-sm w-full text-center shadow-2xl relative">
+        <div className="fixed inset-0 z-[1600] bg-black/60 backdrop-blur-md flex items-center justify-center p-4">
+          <div className="bg-white dark:bg-slate-800 rounded-none sm:rounded-[2rem] p-8 max-w-sm w-full text-center shadow-2xl relative">
             <button onClick={cancelPreview} className="absolute top-6 right-6 text-gray-400 hover:text-gray-600"><X className="w-6 h-6" /></button>
-            <h3 className="text-xl font-black text-gray-800 dark:text-white mb-6 pr-6 text-left">Gửi Sticker? 🌹</h3>
+            <h3 className="text-lg sm:text-xl font-black text-gray-800 dark:text-white mb-6 pr-6 text-left">Gửi Sticker? 🌹</h3>
             <div className="aspect-square w-full rounded-none overflow-hidden mb-8 bg-gray-50/50">
               <SmartImage src={previewUrl} className="w-full h-full" />
             </div>
             <div className="flex space-x-3">
-               <button onClick={() => confirmUpload('save')} disabled={isUploading} className="flex-1 py-4 bg-pink-100 text-pink-600 font-bold rounded-none hover:bg-pink-200 transition-colors">{isUploading ? <Loader2 className="w-5 h-5 animate-spin" /> : "Thư viện"}</button>
-               <button onClick={() => confirmUpload('send')} disabled={isUploading} className="flex-1 py-4 bg-pink-500 text-white font-bold rounded-none hover:bg-pink-600 transition-colors shadow-lg shadow-pink-500/30">{isUploading ? <Loader2 className="w-5 h-5 animate-spin" /> : "Gửi ngay"}</button>
+              <button onClick={() => confirmUpload('save')} disabled={isUploading} className="flex-1 h-14 flex items-center justify-center bg-pink-100 text-pink-600 font-bold text-sm sm:text-base rounded-none hover:bg-pink-200 transition-colors disabled:opacity-70 disabled:cursor-not-allowed">{isUploading ? <Loader2 className="w-5 h-5 animate-spin" /> : "Thư viện"}</button>
+              <button onClick={() => confirmUpload('send')} disabled={isUploading} className="flex-1 h-14 flex items-center justify-center bg-pink-500 text-white font-bold text-sm sm:text-base rounded-none hover:bg-pink-600 transition-colors shadow-lg shadow-pink-500/30 disabled:opacity-70 disabled:cursor-not-allowed">{isUploading ? <Loader2 className="w-5 h-5 animate-spin" /> : "Gửi ngay"}</button>
             </div>
           </div>
         </div>
@@ -1070,7 +1092,8 @@ export const ChatBox: React.FC<ChatBoxProps> = ({
                     type="button"
                     onClick={() => {
                       setShowSendActions(false);
-                      fileInputRef.current?.click();
+                      setIsBgUpload(false);
+                      setShowImageSourceModal(true);
                     }}
                     className="w-full flex items-center gap-2 px-3 py-2 rounded-xl text-left text-slate-700 dark:text-slate-200 hover:bg-pink-50 dark:hover:bg-white/10 transition-all"
                     title="Gửi ảnh"
@@ -1161,18 +1184,98 @@ export const ChatBox: React.FC<ChatBoxProps> = ({
           </div>
         </div>
       </div>
-      {showEmoji && <div className="absolute bottom-28 left-8 z-50"><EmojiPicker theme={isDragging ? Theme.DARK : Theme.LIGHT} onEmojiClick={(ed) => setText(p => p + ed.emoji)} /></div>}
+      {showEmoji && (
+        <div ref={emojiPickerRef} className="absolute bottom-28 left-8 z-50">
+          <EmojiPicker
+            theme={isDragging ? Theme.DARK : Theme.LIGHT}
+            onEmojiClick={(ed) => setText(p => p + ed.emoji)}
+          />
+        </div>
+      )}
+
+      <input
+        ref={fileInputRef}
+        type="file"
+        accept="image/*"
+        className="hidden"
+        onChange={(e) => {
+          const file = e.target.files?.[0];
+          if (file) handlePreviewFile(file);
+          e.currentTarget.value = '';
+        }}
+      />
+
+      {showImageSourceModal && (
+        <div className="fixed inset-0 z-[1600] flex items-center justify-center p-6 bg-black/60 backdrop-blur-xl animate-in fade-in transition-all">
+          <div className="bg-white/10 dark:bg-black/40 backdrop-blur-2xl border border-white/20 w-full max-w-sm rounded-none sm:rounded-[3rem] overflow-hidden shadow-2xl animate-in zoom-in-95 duration-300">
+            <div className="p-8 border-b border-white/10 flex items-center justify-between">
+              <div>
+                <h2 className="text-lg sm:text-xl font-black text-white">Gửi ảnh 🖼️</h2>
+                <p className="text-[9px] sm:text-[10px] text-white/50 font-bold uppercase tracking-widest mt-1">Chọn nguồn ảnh muốn gửi</p>
+              </div>
+              <button onClick={() => setShowImageSourceModal(false)} className="p-2 hover:bg-white/10 rounded-full transition-all text-white/50"><X className="w-6 h-6" /></button>
+            </div>
+
+            <div className="p-8 space-y-6">
+              <button
+                onClick={() => {
+                  setShowImageSourceModal(false);
+                  setIsBgUpload(false);
+                  fileInputRef.current?.click();
+                }}
+                className="w-full h-20 bg-white/5 hover:bg-white/10 border border-white/10 rounded-3xl flex items-center px-6 space-x-5 transition-all group"
+              >
+                <div className="w-12 h-12 rounded-2xl bg-pink-500/20 flex items-center justify-center text-pink-500 group-hover:scale-110 transition-transform">
+                  <ImagePlus className="w-6 h-6" />
+                </div>
+                <div className="text-left">
+                  <p className="text-white font-black text-xs sm:text-sm">Tải lên từ máy</p>
+                  <p className="text-white/40 text-[10px] font-medium">PNG, JPG, JPEG...</p>
+                </div>
+              </button>
+
+              <div className="space-y-4">
+                <div className="flex items-center space-x-3 px-2">
+                  <div className="h-px flex-1 bg-white/10"></div>
+                  <span className="text-[10px] font-black text-white/30 uppercase tracking-[0.2em]">Hoặc dán link</span>
+                  <div className="h-px flex-1 bg-white/10"></div>
+                </div>
+
+                <div className="flex gap-2 p-1.5 bg-white/5 border border-white/10 rounded-3xl group-within:border-pink-500/50 transition-colors">
+                  <input
+                    type="text"
+                    value={imageLinkInput}
+                    onChange={(e) => setImageLinkInput(e.target.value)}
+                    placeholder="https://example.com/image.jpg"
+                    className="flex-1 bg-transparent border-none text-white text-xs px-4 outline-none font-medium placeholder:text-white/20"
+                  />
+                  <button
+                    onClick={async () => {
+                      if (imageLinkInput.startsWith('http')) {
+                        await sendMessage('', imageLinkInput);
+                        setImageLinkInput('');
+                        setShowImageSourceModal(false);
+                      }
+                    }}
+                    className="bg-pink-500 hover:bg-pink-600 text-white px-5 py-3 rounded-2xl font-bold text-[9px] sm:text-[10px] shadow-lg shadow-pink-500/20 transition-all active:scale-95 whitespace-nowrap"
+                  >Gửi</button>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
       
       {/* Modern Sticker Library Modal */}
       {showStickers && (
-        <div className="fixed inset-0 z-[200] flex items-center justify-center p-4 sm:p-10 animate-in fade-in zoom-in-95 duration-300">
+        <div className="fixed inset-0 z-[1600] flex items-center justify-center p-0 sm:p-10 animate-in fade-in zoom-in-95 duration-300">
            <div className="absolute inset-0 bg-black/80 backdrop-blur-xl" onClick={() => setShowStickers(false)}></div>
            
-           <div className="relative bg-[var(--bg-header)] w-full max-w-4xl max-h-[85vh] rounded-[2.5rem] shadow-2xl overflow-hidden border border-pink-100 dark:border-slate-800 flex flex-col">
+          <div className="relative bg-[var(--bg-header)] w-full h-full sm:h-auto sm:max-w-4xl sm:max-h-[85vh] rounded-none sm:rounded-[2.5rem] shadow-2xl overflow-hidden border border-pink-100 dark:border-slate-800 flex flex-col">
               <div className="p-8 border-b border-pink-50 dark:border-slate-800 flex items-center justify-between">
                  <div>
-                    <h2 className="text-2xl font-black text-pink-600 dark:text-pink-400 flex items-center">Thư viện Nhãn dán <Sparkles className="ml-3 w-6 h-6 animate-pulse" /></h2>
-                    <p className="text-xs text-gray-400 font-medium mt-1">Nơi lưu giữ những biểu cảm ngọt ngào của hai bạn 🎀</p>
+                    <h2 className="text-xl sm:text-2xl font-black text-pink-600 dark:text-pink-400 flex items-center">Thư viện Nhãn dán <Sparkles className="ml-3 w-6 h-6 animate-pulse" /></h2>
+                    <p className="text-[11px] sm:text-xs text-gray-400 font-medium mt-1">Nơi lưu giữ những biểu cảm ngọt ngào của hai bạn 🎀</p>
                  </div>
                  <button onClick={() => setShowStickers(false)} className="p-3 hover:bg-pink-50 dark:hover:bg-slate-800 rounded-full transition-all text-gray-400 hover:text-pink-500"><X className="w-7 h-7" /></button>
               </div>
@@ -1242,12 +1345,12 @@ export const ChatBox: React.FC<ChatBoxProps> = ({
 
       {/* Background Source Selection Modal - HIGH END */}
       {showBgSourceModal && (
-        <div className="fixed inset-0 z-[400] flex items-center justify-center p-6 bg-black/60 backdrop-blur-xl animate-in fade-in transition-all">
-           <div className="bg-white/10 dark:bg-black/40 backdrop-blur-2xl border border-white/20 w-full max-w-sm rounded-[3rem] overflow-hidden shadow-2xl animate-in zoom-in-95 duration-300">
+        <div className="fixed inset-0 z-[1600] flex items-center justify-center p-6 bg-black/60 backdrop-blur-xl animate-in fade-in transition-all">
+          <div className="bg-white/10 dark:bg-black/40 backdrop-blur-2xl border border-white/20 w-full max-w-sm rounded-none sm:rounded-[3rem] overflow-hidden shadow-2xl animate-in zoom-in-95 duration-300">
               <div className="p-8 border-b border-white/10 flex items-center justify-between">
                  <div>
-                    <h2 className="text-xl font-black text-white">Đổi hình nền 🖼️</h2>
-                    <p className="text-[10px] text-white/50 font-bold uppercase tracking-widest mt-1">Chọn nguồn ảnh kỷ niệm</p>
+                    <h2 className="text-lg sm:text-xl font-black text-white">Đổi hình nền 🖼️</h2>
+                    <p className="text-[9px] sm:text-[10px] text-white/50 font-bold uppercase tracking-widest mt-1">Chọn nguồn ảnh kỷ niệm</p>
                  </div>
                  <button onClick={() => setShowBgSourceModal(false)} className="p-2 hover:bg-white/10 rounded-full transition-all text-white/50"><X className="w-6 h-6" /></button>
               </div>
@@ -1265,7 +1368,7 @@ export const ChatBox: React.FC<ChatBoxProps> = ({
                        <ImagePlus className="w-6 h-6" />
                     </div>
                     <div className="text-left">
-                       <p className="text-white font-black text-sm">Tải lên từ máy</p>
+                       <p className="text-white font-black text-xs sm:text-sm">Tải lên từ máy</p>
                        <p className="text-white/40 text-[10px] font-medium">PNG, JPG, JPEG...</p>
                     </div>
                  </button>
@@ -1283,7 +1386,7 @@ export const ChatBox: React.FC<ChatBoxProps> = ({
                          value={bgLinkInput}
                          onChange={(e) => setBgLinkInput(e.target.value)}
                          placeholder="https://example.com/image.jpg" 
-                         className="flex-1 bg-transparent border-none text-white text-xs px-4 outline-none font-medium placeholder:text-white/20"
+                         className="flex-1 bg-transparent border-none text-white text-[11px] sm:text-xs px-4 outline-none font-medium placeholder:text-white/20"
                        />
                        <button 
                          onClick={() => {
@@ -1304,12 +1407,12 @@ export const ChatBox: React.FC<ChatBoxProps> = ({
 
       {/* Space Management Modal - NEW HIGH-END CENTER */}
       {showSpaceSettings && (
-        <div className="fixed inset-0 z-[100] flex items-center justify-center p-6 bg-black/60 backdrop-blur-xl animate-in fade-in transition-all">
-           <div className="bg-white/10 dark:bg-black/40 backdrop-blur-2xl border border-white/20 w-full max-w-md rounded-[3rem] overflow-hidden shadow-2xl animate-in zoom-in-95 duration-300">
+        <div className="fixed inset-0 z-[1600] flex items-center justify-center p-0 sm:p-6 bg-black/60 backdrop-blur-xl animate-in fade-in transition-all">
+          <div className="bg-white/10 dark:bg-black/40 backdrop-blur-2xl border border-white/20 w-full h-full sm:h-auto sm:max-w-md rounded-none sm:rounded-[3rem] overflow-hidden shadow-2xl animate-in zoom-in-95 duration-300">
               <div className="p-8 border-b border-white/10 flex items-center justify-between">
                  <div>
-                    <h2 className="text-2xl font-black text-white flex items-center">Cài đặt nền <Settings className="ml-3 w-6 h-6 text-pink-500" /></h2>
-                    <p className="text-xs text-white/50 font-medium mt-1">Tinh chỉnh sắc thái vũ trụ của hai bạn 🌌</p>
+                    <h2 className="text-xl sm:text-2xl font-black text-white flex items-center">Cài đặt nền <Settings className="ml-3 w-6 h-6 text-pink-500" /></h2>
+                    <p className="text-[11px] sm:text-xs text-white/50 font-medium mt-1">Tinh chỉnh sắc thái vũ trụ của hai bạn 🌌</p>
                  </div>
                  <button onClick={() => setShowSpaceSettings(false)} className="p-3 hover:bg-white/10 rounded-full transition-all text-white/50 hover:text-white"><X className="w-7 h-7" /></button>
               </div>
@@ -1422,7 +1525,7 @@ export const ChatBox: React.FC<ChatBoxProps> = ({
       )}
 
       {viewingSticker && (
-        <div className="fixed inset-0 z-[200] flex flex-col items-center justify-center bg-black/90 backdrop-blur-xl animate-in fade-in duration-300 pointer-events-auto p-10">
+        <div className="fixed inset-0 z-[1600] flex flex-col items-center justify-center bg-black/90 backdrop-blur-xl animate-in fade-in duration-300 pointer-events-auto p-10">
            <button onClick={() => setViewingSticker(null)} className="absolute top-10 right-10 p-4 bg-white/10 hover:bg-white/20 rounded-full transition-all text-white hover:rotate-90"><X className="w-8 h-8" /></button>
            
            <div className="relative max-w-2xl w-full flex flex-col items-center animate-in zoom-in-95 duration-500">
@@ -1605,15 +1708,15 @@ export const ChatBox: React.FC<ChatBoxProps> = ({
       </div>
       {/* Secret Heart Reveal Modal - REPLACES LAGGY EXPLOSION */}
       {openingHeartMessage && (
-        <div className="fixed inset-0 z-[1000] flex items-center justify-center p-6 bg-black/60 backdrop-blur-xl animate-in fade-in duration-500">
+        <div className="fixed inset-0 z-[1600] flex items-center justify-center p-6 bg-black/60 backdrop-blur-xl animate-in fade-in duration-500">
            <div className="absolute inset-0" onClick={() => setOpeningHeartMessage(null)}></div>
            
-           <div className="relative w-full max-w-sm bg-white/10 backdrop-blur-2xl border border-white/20 rounded-[3rem] p-10 flex flex-col items-center text-center shadow-2xl animate-in zoom-in-95 duration-500">
+          <div className="relative w-full max-w-sm bg-white/10 backdrop-blur-2xl border border-white/20 rounded-none sm:rounded-[3rem] p-10 flex flex-col items-center text-center shadow-2xl animate-in zoom-in-95 duration-500">
               <div className="w-24 h-24 bg-pink-500 rounded-full flex items-center justify-center mb-8 shadow-lg shadow-pink-500/50 animate-pulse">
                  <HeartIcon className="w-12 h-12 text-white fill-white" />
               </div>
               
-              <h3 className="text-pink-300 font-black text-[10px] uppercase tracking-[0.3em] mb-6 tracking-widest">Thông điệp từ trái tim</h3>
+              <h3 className="text-pink-300 font-black text-[9px] sm:text-[10px] uppercase tracking-[0.3em] mb-6 tracking-widest">Thông điệp từ trái tim</h3>
               
               <div className="w-full min-h-[160px] flex items-center justify-center mb-10 overflow-hidden relative">
                  <ScratchToReveal width={280} height={160} onComplete={() => {
@@ -1625,7 +1728,7 @@ export const ChatBox: React.FC<ChatBoxProps> = ({
                         <SmartImage src={openingHeartMessage.image_url} className="w-full h-full object-contain" />
                       </div>
                     ) : (
-                      <p className="text-white text-2xl font-black italic leading-tight text-center px-4 drop-shadow-md">
+                       <p className="text-white text-xl sm:text-2xl font-black italic leading-tight text-center px-4 drop-shadow-md">
                          "{openingHeartMessage.content}"
                       </p>
                     )}

@@ -528,12 +528,12 @@ const App: React.FC = () => {
 
       {/* Avatar Source Selection Modal - ROMANTIC GLASS */}
       {showAvatarSourceModal && (
-        <div className="fixed inset-0 z-[500] flex items-center justify-center p-6 bg-black/60 backdrop-blur-xl animate-in fade-in transition-all">
-           <div className="bg-gradient-to-br from-pink-500/20 to-rose-600/20 backdrop-blur-3xl border border-white/20 w-full max-w-sm rounded-[3rem] overflow-hidden shadow-2xl animate-in zoom-in-95 duration-300">
+        <div className="fixed inset-0 z-[1600] flex items-center justify-center p-6 bg-black/60 backdrop-blur-xl animate-in fade-in transition-all">
+          <div className="bg-gradient-to-br from-pink-500/20 to-rose-600/20 backdrop-blur-3xl border border-white/20 w-full max-w-sm rounded-none sm:rounded-[3rem] overflow-hidden shadow-2xl animate-in zoom-in-95 duration-300">
               <div className="p-8 border-b border-white/10 flex items-center justify-between text-white">
                  <div>
-                    <h2 className="text-xl font-black">Diện mạo mới 🌹</h2>
-                    <p className="text-[10px] text-white/50 font-bold uppercase tracking-widest mt-1">Chọn nguồn ảnh đại diện của bạn</p>
+                    <h2 className="text-lg sm:text-xl font-black">Diện mạo mới 🌹</h2>
+                    <p className="text-[9px] sm:text-[10px] text-white/50 font-bold uppercase tracking-widest mt-1">Chọn nguồn ảnh đại diện của bạn</p>
                  </div>
                  <button onClick={() => setShowAvatarSourceModal(false)} className="p-2 hover:bg-white/10 rounded-full transition-all text-white/50 group"><X className="w-6 h-6 group-hover:rotate-90 transition-transform" /></button>
               </div>
@@ -550,7 +550,7 @@ const App: React.FC = () => {
                        <ImagePlus className="w-6 h-6" />
                     </div>
                     <div className="text-left text-white">
-                       <p className="font-black text-sm">Tải lên kỷ niệm</p>
+                        <p className="font-black text-xs sm:text-sm">Tải lên kỷ niệm</p>
                        <p className="text-white/40 text-[10px] font-medium">Bản sắc cá nhân</p>
                     </div>
                  </button>
