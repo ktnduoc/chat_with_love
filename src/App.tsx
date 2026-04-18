@@ -338,7 +338,7 @@ const App: React.FC = () => {
                   <HeartIcon className="text-white w-4 h-4 sm:w-5 sm:h-5 fill-white" />
                 </div>
                 <div className="flex flex-col leading-none">
-                  <h2 className="text-xl sm:text-2xl font-black italic tracking-tight">LoveChat</h2>
+                  <h2 className="text-xl sm:text-2xl font-black italic tracking-tight">&lt;3-Chat</h2>
                   <span className="mt-1 text-[9px] sm:text-[10px] font-bold uppercase tracking-[0.15em] text-rose-400/90 dark:text-rose-300/80">v{APP_VERSION}</span>
                 </div>
               </div>
