@@ -162,7 +162,7 @@ const App: React.FC = () => {
     };
   }, []);
 
-  const { onlineUsers, typingUsers, updateProfile, uploadImage } = useChat(currentUser?.id || '', undefined, true);
+  const { onlineUsers, typingUsers, updateProfile, uploadImage, setTypingStatus } = useChat(currentUser?.id || '', undefined, true);
 
   useEffect(() => {
     // Initial theme setup
@@ -493,6 +493,7 @@ const App: React.FC = () => {
                   if (!isFocusedMode) setIsMobileSidebarOpen(true);
                 }}
                 typingUsers={typingUsers}
+                setTypingStatus={setTypingStatus}
                 effectType={effectType} 
                 theme={currentTheme || themes[0]}
                 onThemeCycle={() => cycleTheme()}

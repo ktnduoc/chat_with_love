@@ -67,6 +67,7 @@ interface ChatBoxProps {
   onForceSync?: () => void;
   isFocusedMode?: boolean;
   onToggleFocus?: () => void;
+  setTypingStatus?: (isTyping: boolean) => Promise<void> | void;
 }
 
 export const ChatBox: React.FC<ChatBoxProps> = ({ 
@@ -85,7 +86,8 @@ export const ChatBox: React.FC<ChatBoxProps> = ({
   onBgStyleChange,
   onForceSync,
   isFocusedMode = false,
-  onToggleFocus
+  onToggleFocus,
+  setTypingStatus: setTypingStatusGlobal
 }) => {
   const [text, setText] = useState('');
   const [showEmoji, setShowEmoji] = useState(false);
@@ -132,7 +134,12 @@ export const ChatBox: React.FC<ChatBoxProps> = ({
   const touchDragMovedRef = useRef(false);
   const suppressNextStickerClickRef = useRef(false);
 
-  const { messages, setMessages, hasMore, sendMessage, openMessage, uploadImage, saveAsSticker, loadMore, setTypingStatus } = useChat(currentUser.id, receiver.id, false);
+  const { messages, setMessages, hasMore, sendMessage, openMessage, uploadImage, saveAsSticker, loadMore } = useChat(currentUser.id, receiver.id, false);
+
+  const pushTypingStatus = async (isTyping: boolean) => {
+    if (!setTypingStatusGlobal) return;
+    await setTypingStatusGlobal(isTyping);
+  };
 
   // Sync openedHeartIds with coming updates from the other person (MANDATORY: MUST BE AFTER messages IS DEFINED)
   useEffect(() => {
@@ -458,20 +465,20 @@ export const ChatBox: React.FC<ChatBoxProps> = ({
        console.log('⌨️ [Command] Slash command /s detected! Revealing sticker ribbon...');
        setShowStickerRibbon(true);
        setText(''); // Clear input
-       setTypingStatus(false);
+       pushTypingStatus(false);
        return;
     }
 
-    setTypingStatus(true);
+     pushTypingStatus(true);
     if (typingTimeoutRef.current) clearTimeout(typingTimeoutRef.current);
     typingTimeoutRef.current = window.setTimeout(() => {
-       setTypingStatus(false);
+       pushTypingStatus(false);
     }, 2000);
   };
 
   const handleSend = async (sizeOverride?: number) => {
     if (text.trim() || sizeOverride) {
-      setTypingStatus(false);
+      pushTypingStatus(false);
       const effectValue = sizeOverride ? `heart:${sizeOverride}` : 'none';
       await sendMessage(text, undefined, effectValue);
       setText('');
@@ -1163,10 +1170,10 @@ export const ChatBox: React.FC<ChatBoxProps> = ({
           {/* Typing Indicator */}
           {isOtherTyping && (
             <div className="flex items-center space-x-4 animate-in fade-in slide-in-from-bottom-2 duration-300 py-2">
-               <div className="flex space-x-1.5 bg-[var(--bg-bubble-partner)] backdrop-blur-md dark:bg-slate-800 px-5 py-3.5 rounded-2xl shadow-lg border border-pink-50">
-                  <div className="w-2 h-2 bg-pink-400 rounded-full animate-bounce [animation-delay:-0.3s]"></div>
-                  <div className="w-2 h-2 bg-pink-400 rounded-full animate-bounce [animation-delay:-0.15s]"></div>
-                  <div className="w-2 h-2 bg-pink-400 rounded-full animate-bounce"></div>
+              <div className="flex items-center gap-1.5 bg-[var(--bg-bubble-partner)] backdrop-blur-md dark:bg-slate-800 px-5 py-3.5 rounded-2xl shadow-lg border border-pink-50">
+                <span className="typing-dot" />
+                <span className="typing-dot" />
+                <span className="typing-dot" />
                </div>
                <div className="flex flex-col">
                   <span className="text-[10px] font-black text-pink-400 uppercase tracking-widest italic">{receiver.username} đang soạn tin... 🎀</span>

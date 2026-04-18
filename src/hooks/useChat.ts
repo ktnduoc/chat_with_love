@@ -95,25 +95,28 @@ export function useChat(currentUserId: string, receiverId?: string, isGlobalPres
 
     presenceChannelRef.current = channel;
 
+    const rebuildPresenceState = () => {
+      const state = channel.presenceState();
+      const online: Record<string, boolean> = {};
+      const typing: Record<string, boolean> = {};
+
+      Object.entries(state).forEach(([key, userStates]) => {
+        online[key] = true;
+        const states = Array.isArray(userStates) ? (userStates as any[]) : [];
+        // A user can have multiple metas (multi-tab/device). Typing should be true if any meta is typing.
+        if (states.some((meta) => Boolean(meta?.isTyping))) {
+          typing[key] = true;
+        }
+      });
+
+      setOnlineUsers(online);
+      setTypingUsers(typing);
+    };
+
     channel
-      .on('presence', { event: 'sync' }, () => {
-        const state = channel.presenceState();
-        const online: Record<string, boolean> = {};
-        const typing: Record<string, boolean> = {};
-        
-        Object.keys(state).forEach(key => {
-          online[key] = true;
-          const userStates = state[key];
-          if (userStates && userStates.length > 0) {
-            const userState = userStates[0] as any;
-            if (userState.isTyping) {
-              typing[key] = true;
-            }
-          }
-        });
-        setOnlineUsers(online);
-        setTypingUsers(typing);
-      })
+      .on('presence', { event: 'sync' }, rebuildPresenceState)
+      .on('presence', { event: 'join' }, rebuildPresenceState)
+      .on('presence', { event: 'leave' }, rebuildPresenceState)
       .subscribe(async (status) => {
         if (status === 'SUBSCRIBED') {
           isPresenceSubscribed.current = true;
