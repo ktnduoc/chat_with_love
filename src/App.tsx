@@ -15,6 +15,8 @@ function cn(...inputs: ClassValue[]) {
   return twMerge(clsx(inputs));
 }
 
+const APP_VERSION = __APP_VERSION__;
+
 const App: React.FC = () => {
   const [session, setSession] = useState<Session | null>(null);
   const [profiles, setProfiles] = useState<Profile[]>([]);
@@ -238,7 +240,8 @@ const App: React.FC = () => {
   const handleAvatarClick = () => setShowAvatarSourceModal(true);
 
   const handleAvatarChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0];
+    const inputEl = e.currentTarget;
+    const file = inputEl.files?.[0];
     if (!file || !currentUser) return;
 
     // Close source modal right after user picks a file.
@@ -249,7 +252,7 @@ const App: React.FC = () => {
     if (url) await updateProfile({ avatar_url: url });
 
     setIsUpdatingAvatar(false);
-    e.currentTarget.value = '';
+    inputEl.value = '';
   };
 
   const handleStartEditingName = () => {
@@ -330,11 +333,14 @@ const App: React.FC = () => {
         )}>
           <div className="flex flex-col h-full">
             <div className="flex items-center justify-between p-10 pb-6">
-            <div className="flex items-center space-x-4 text-rose-500 dark:text-rose-400 -ml-2">
-                <div className="w-10 h-10 bg-pink-500 rounded-full flex items-center justify-center shadow-lg shadow-pink-200 dark:shadow-rose-900/40 transition-transform hover:rotate-12">
-                  <HeartIcon className="text-white w-5 h-5 fill-white" />
+            <div className="flex items-center space-x-3 sm:space-x-4 text-rose-500 dark:text-rose-400 -ml-2">
+                <div className="w-8 h-8 sm:w-10 sm:h-10 bg-pink-500 rounded-full flex items-center justify-center shadow-lg shadow-pink-200 dark:shadow-rose-900/40 transition-transform hover:rotate-12">
+                  <HeartIcon className="text-white w-4 h-4 sm:w-5 sm:h-5 fill-white" />
                 </div>
-                <h2 className="text-2xl font-black italic tracking-tight">LoveChat</h2>
+                <div className="flex flex-col leading-none">
+                  <h2 className="text-xl sm:text-2xl font-black italic tracking-tight">LoveChat</h2>
+                  <span className="mt-1 text-[9px] sm:text-[10px] font-bold uppercase tracking-[0.15em] text-rose-400/90 dark:text-rose-300/80">v{APP_VERSION}</span>
+                </div>
               </div>
               <div className="flex items-center space-x-2">
                 <button
