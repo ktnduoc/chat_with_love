@@ -135,7 +135,35 @@ interface HeartRainParticle {
   opacity: number;
 }
 
+interface TextColorPreset {
+  id: string;
+  label: string;
+  style: React.CSSProperties;
+}
+
+interface SlashCommandOption {
+  command: '/s' | '/c';
+  label: string;
+  description: string;
+}
+
 const REACTION_SYNC_RECENT_MESSAGE_LIMIT = 120;
+
+const TEXT_COLOR_PRESETS: TextColorPreset[] = [
+  { id: 'default', label: 'Mặc định', style: {} },
+  { id: 'ruby', label: 'Ruby', style: { color: '#e11d48' } },
+  { id: 'ocean', label: 'Ocean', style: { color: '#0284c7' } },
+  { id: 'violet', label: 'Violet', style: { color: '#7c3aed' } },
+  { id: 'mint', label: 'Mint', style: { color: '#059669' } },
+  { id: 'sunset', label: 'Sunset', style: { backgroundImage: 'linear-gradient(90deg, #f97316, #ef4444)', WebkitBackgroundClip: 'text', backgroundClip: 'text', color: 'transparent', WebkitTextFillColor: 'transparent' } },
+  { id: 'berry', label: 'Berry', style: { backgroundImage: 'linear-gradient(90deg, #ec4899, #8b5cf6)', WebkitBackgroundClip: 'text', backgroundClip: 'text', color: 'transparent', WebkitTextFillColor: 'transparent' } },
+  { id: 'aqua', label: 'Aqua', style: { backgroundImage: 'linear-gradient(90deg, #06b6d4, #22c55e)', WebkitBackgroundClip: 'text', backgroundClip: 'text', color: 'transparent', WebkitTextFillColor: 'transparent' } }
+];
+
+const SLASH_COMMAND_OPTIONS: SlashCommandOption[] = [
+  { command: '/s', label: 'Nhãn dán', description: 'Mở dải sticker nhanh để gửi' },
+  { command: '/c', label: 'Màu chữ', description: 'Mở bảng chọn màu hoặc gradient' }
+];
 
 interface MessageDeleteRequestRow {
   id: number;
@@ -258,6 +286,8 @@ export const ChatBox: React.FC<ChatBoxProps> = ({
   const [searchQuery, setSearchQuery] = useState('');
   const [isComposerFocused, setIsComposerFocused] = useState(false);
   const [showSendActions, setShowSendActions] = useState(false);
+  const [showColorPicker, setShowColorPicker] = useState(false);
+  const [selectedTextColorPresetId, setSelectedTextColorPresetId] = useState('default');
   const [showHeaderActions, setShowHeaderActions] = useState(false);
   const [replyTarget, setReplyTarget] = useState<Message | null>(null);
   const [openingHeartMessage, setOpeningHeartMessage] = useState<Message | null>(null);
@@ -303,6 +333,12 @@ export const ChatBox: React.FC<ChatBoxProps> = ({
   const [isSendSizing, setIsSendSizing] = useState(false);
   const [sendTextScale, setSendTextScale] = useState(1);
   const quickReactionEmojis = ['❤️', '😂', '😮'];
+  const textColorPresetById = new Map(TEXT_COLOR_PRESETS.map(preset => [preset.id, preset]));
+  const slashQuery = text.trim().toLowerCase();
+  const isSlashCommandMenuOpen = slashQuery.startsWith('/');
+  const filteredSlashCommands = isSlashCommandMenuOpen
+    ? SLASH_COMMAND_OPTIONS.filter(item => (`${item.command} ${item.label} ${item.description}`).toLowerCase().includes(slashQuery))
+    : [];
   const sendDragStartYRef = useRef<number | null>(null);
   const SEND_TEXT_SCALE_MIN = 0.35;
   const SEND_TEXT_SCALE_MAX = 3.4;
@@ -1028,19 +1064,33 @@ export const ChatBox: React.FC<ChatBoxProps> = ({
     }
   };
 
+  const executeSlashCommand = (command: string) => {
+    if (command === '/s') {
+      console.log('⌨️ [Command] Slash command /s detected! Revealing sticker ribbon...');
+      setShowStickerRibbon(true);
+      setText('');
+      pushTypingStatus(false);
+      broadcastTypingStatus(false);
+      return true;
+    }
+
+    if (command === '/c') {
+      setShowColorPicker(true);
+      setText('');
+      pushTypingStatus(false);
+      broadcastTypingStatus(false);
+      return true;
+    }
+
+    return false;
+  };
+
   const handleInputChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     const val = e.target.value;
     setText(val);
     
     // Slash Commands Magic
-    if (val.toLowerCase() === '/s') {
-       console.log('⌨️ [Command] Slash command /s detected! Revealing sticker ribbon...');
-       setShowStickerRibbon(true);
-       setText(''); // Clear input
-       pushTypingStatus(false);
-       broadcastTypingStatus(false);
-       return;
-    }
+    if (executeSlashCommand(val.trim().toLowerCase())) return;
 
      pushTypingStatus(true);
      broadcastTypingStatus(true);
@@ -1094,9 +1144,12 @@ export const ChatBox: React.FC<ChatBoxProps> = ({
       const replySnippet = replyTarget
         ? (replyTarget.image_url ? '[Ảnh/GIF]' : getReplySnippetFromMessage(replyTarget))
         : '';
-      const payloadText = replyTarget && text.trim()
-        ? `[[reply:${encodeURIComponent(replySnippet)}]]\n${text}`
-        : text;
+      const trimmedText = text.trim();
+      const normalizedColorId = normalizeTextColorPresetId(selectedTextColorPresetId);
+      const colorMarker = normalizedColorId !== 'default' ? `[[color:${normalizedColorId}]]\n` : '';
+      const payloadText = replyTarget && trimmedText
+        ? `[[reply:${encodeURIComponent(replySnippet)}]]\n${colorMarker}${trimmedText}`
+        : `${colorMarker}${trimmedText}`;
 
       await sendMessage(payloadText, undefined, effectValue);
       setText('');
@@ -1119,9 +1172,12 @@ export const ChatBox: React.FC<ChatBoxProps> = ({
     const replySnippet = replyTarget
       ? (replyTarget.image_url ? '[Ảnh/GIF]' : getReplySnippetFromMessage(replyTarget))
       : '';
+    const trimmedText = text.trim();
+    const normalizedColorId = normalizeTextColorPresetId(selectedTextColorPresetId);
+    const colorMarker = normalizedColorId !== 'default' ? `[[color:${normalizedColorId}]]\n` : '';
     const payloadText = replyTarget
-      ? `[[reply:${encodeURIComponent(replySnippet)}]]\n${text}`
-      : text;
+      ? `[[reply:${encodeURIComponent(replySnippet)}]]\n${colorMarker}${trimmedText}`
+      : `${colorMarker}${trimmedText}`;
 
     await sendMessage(payloadText, undefined, effectValue);
     setText('');
@@ -1218,6 +1274,27 @@ export const ChatBox: React.FC<ChatBoxProps> = ({
     return Math.max(0.75, Math.min(2.2, raw));
   };
 
+  const normalizeTextColorPresetId = (value?: string | null) => {
+    if (!value) return 'default';
+    return textColorPresetById.has(value) ? value : 'default';
+  };
+
+  const extractColorMarker = (rawBody: string) => {
+    const match = rawBody.match(/^\[\[color:([a-z0-9-]+)\]\]\n?/i);
+    if (!match) {
+      return { colorPresetId: 'default', body: rawBody };
+    }
+
+    const presetId = normalizeTextColorPresetId(match[1]);
+    const body = rawBody.slice(match[0].length);
+    return { colorPresetId: presetId, body };
+  };
+
+  const getTextColorStyle = (presetId?: string | null) => {
+    const normalized = normalizeTextColorPresetId(presetId);
+    return textColorPresetById.get(normalized)?.style;
+  };
+
   const parseReplyContent = (content: string) => {
     const normalizeReplyText = (value: string) => value.replace(/^(?:\s*↪\s*|\s*trả lời:\s*)+/i, '').trim();
 
@@ -1233,22 +1310,23 @@ export const ChatBox: React.FC<ChatBoxProps> = ({
 
       return {
         replySnippet: normalizeReplyText(decodedSnippet),
-        body: markerMatch[2] || ''
+        ...extractColorMarker(markerMatch[2] || '')
       };
     }
 
     if (!content.startsWith('↪ ')) {
-      return { replySnippet: null as string | null, body: content };
+      return { replySnippet: null as string | null, ...extractColorMarker(content) };
     }
 
     const newlineIndex = content.indexOf('\n');
     if (newlineIndex === -1) {
-      return { replySnippet: normalizeReplyText(content.slice(2)), body: '' };
+      return { replySnippet: normalizeReplyText(content.slice(2)), ...extractColorMarker('') };
     }
 
+    const extracted = extractColorMarker(content.slice(newlineIndex + 1));
     return {
       replySnippet: normalizeReplyText(content.slice(2, newlineIndex)),
-      body: content.slice(newlineIndex + 1)
+      ...extracted
     };
   };
 
@@ -2252,6 +2330,7 @@ export const ChatBox: React.FC<ChatBoxProps> = ({
             const textLineHeight = textScale >= 2 ? 1.12 : textScale <= 0.7 ? 1.22 : 1.34;
             const parsedReply = parseReplyContent(msg.content || '');
             const messageBody = parsedReply.body;
+            const textColorStyle = getTextColorStyle(parsedReply.colorPresetId);
             
             // Check if this is an "Old" message being loaded historically
             // We give historical messages instant presence (no fade-in) for stability
@@ -2487,6 +2566,7 @@ export const ChatBox: React.FC<ChatBoxProps> = ({
                               <span
                                 key={i}
                                 className={cn(isHeartEffect(msg.effect) && "relative z-10", "twemoji-wrap")}
+                                style={textColorStyle}
                                 dangerouslySetInnerHTML={{ __html: renderTwemoji(part) }}
                               />
                             );
@@ -2709,6 +2789,48 @@ export const ChatBox: React.FC<ChatBoxProps> = ({
             </div>
           )}
 
+          {showColorPicker && (
+            <div className={cn(
+              "rounded-2xl border px-3 py-3",
+              isDarkMode ? "bg-white/5 border-white/15" : "bg-white/85 border-pink-100"
+            )}>
+              <div className="flex items-center justify-between gap-2 mb-2.5">
+                <p className={cn("text-[10px] font-black uppercase tracking-wide", isDarkMode ? "text-pink-200" : "text-pink-600")}>Màu chữ /c</p>
+                <button
+                  type="button"
+                  onClick={() => setShowColorPicker(false)}
+                  className={cn("w-6 h-6 rounded-full flex items-center justify-center", isDarkMode ? "bg-white/10 text-white/80" : "bg-slate-100 text-slate-500")}
+                  title="An bang mau"
+                >
+                  <X className="w-3.5 h-3.5" />
+                </button>
+              </div>
+
+              <div className="grid grid-cols-4 sm:grid-cols-8 gap-2">
+                {TEXT_COLOR_PRESETS.map((preset) => (
+                  <button
+                    key={preset.id}
+                    type="button"
+                    onClick={() => setSelectedTextColorPresetId(preset.id)}
+                    className={cn(
+                      "h-9 rounded-xl border text-[10px] font-black transition-all",
+                      selectedTextColorPresetId === preset.id
+                        ? "scale-105 border-pink-400 ring-2 ring-pink-300/40"
+                        : (isDarkMode ? "border-white/15" : "border-pink-100")
+                    )}
+                    title={preset.label}
+                  >
+                    {preset.id === 'default' ? (
+                      <span className={cn(isDarkMode ? "text-white/85" : "text-slate-600")}>Aa</span>
+                    ) : (
+                      <span style={preset.style}>Aa</span>
+                    )}
+                  </button>
+                ))}
+              </div>
+            </div>
+          )}
+
           {/* Sticker Ribbon */}
           {showStickerRibbon && stickers.length > 0 && (
             <div ref={stickerRibbonRef} className={cn("flex items-center space-x-3 group/ribbon animate-in slide-in-from-bottom-2 duration-300", isFocusedMode ? "immersion-clear-ui" : "") }>
@@ -2855,6 +2977,42 @@ export const ChatBox: React.FC<ChatBoxProps> = ({
                 )}
                 style={isDarkMode ? { WebkitTextFillColor: '#ffffff' } : undefined}
               />
+
+              {isSlashCommandMenuOpen && (
+                <div className={cn(
+                  "absolute bottom-full left-0 right-0 mb-2 rounded-2xl border backdrop-blur-xl shadow-2xl overflow-hidden z-40",
+                  isDarkMode ? "bg-slate-900/95 border-white/10" : "bg-white/95 border-pink-100"
+                )}>
+                  {filteredSlashCommands.length > 0 ? (
+                    <div className="py-1.5">
+                      {filteredSlashCommands.map((item) => (
+                        <button
+                          key={item.command}
+                          type="button"
+                          onMouseDown={(e) => e.preventDefault()}
+                          onClick={() => {
+                            executeSlashCommand(item.command);
+                            setText('');
+                          }}
+                          className={cn(
+                            "w-full px-3 py-2 text-left flex items-center justify-between gap-3 transition-all",
+                            isDarkMode ? "hover:bg-white/10" : "hover:bg-pink-50"
+                          )}
+                        >
+                          <div className="min-w-0">
+                            <p className={cn("text-xs font-black", isDarkMode ? "text-white" : "text-slate-800")}>{item.command} {item.label}</p>
+                            <p className={cn("text-[10px] truncate", isDarkMode ? "text-white/60" : "text-slate-500")}>{item.description}</p>
+                          </div>
+                          <ChevronDown className={cn("w-4 h-4 rotate-[-90deg] shrink-0", isDarkMode ? "text-white/40" : "text-slate-400")} />
+                        </button>
+                      ))}
+                    </div>
+                  ) : (
+                    <div className={cn("px-3 py-2 text-[11px] font-semibold", isDarkMode ? "text-white/60" : "text-slate-500")}>Không có lệnh phù hợp</div>
+                  )}
+                </div>
+              )}
+
               {sentFlyingMessages.length >= 3 && (
                 <div className="absolute -top-10 left-1/2 -translate-x-1/2 px-4 py-1.5 bg-pink-500 text-white text-[10px] font-black rounded-full shadow-xl animate-bounce">
                    Bầu trời đã đầy bí mật! 🎈
