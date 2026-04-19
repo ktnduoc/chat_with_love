@@ -2359,8 +2359,8 @@ export const ChatBox: React.FC<ChatBoxProps> = ({
 
                                   {isReactionPickerOpen && (
                                     <div className={cn(
-                                      "absolute z-[1450] bottom-full mb-2 px-3 py-2 sm:px-2 sm:py-1 rounded-full border backdrop-blur-xl flex items-center gap-2 sm:gap-1",
-                                      isMe ? "right-0" : "left-0",
+                                      "fixed sm:absolute z-[1450] left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2 sm:left-auto sm:top-auto sm:translate-x-0 sm:translate-y-0 sm:bottom-full sm:mb-2 px-3 py-2 sm:px-2 sm:py-1 rounded-full border backdrop-blur-xl flex items-center gap-2 sm:gap-1 max-w-[92vw]",
+                                      isMe ? "sm:right-0" : "sm:left-0",
                                       "bg-black/60 border-white/20"
                                     )}>
                                       {quickReactionEmojis.map((emoji) => (
@@ -2518,8 +2518,8 @@ export const ChatBox: React.FC<ChatBoxProps> = ({
 
                                 {isReactionPickerOpen && (
                                   <div className={cn(
-                                    "absolute z-[1450] bottom-full mb-2 px-3 py-2 sm:px-2 sm:py-1 rounded-full border backdrop-blur-xl flex items-center gap-2 sm:gap-1",
-                                    isMe ? "right-0" : "left-0",
+                                    "fixed sm:absolute z-[1450] left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2 sm:left-auto sm:top-auto sm:translate-x-0 sm:translate-y-0 sm:bottom-full sm:mb-2 px-3 py-2 sm:px-2 sm:py-1 rounded-full border backdrop-blur-xl flex items-center gap-2 sm:gap-1 max-w-[92vw]",
+                                    isMe ? "sm:right-0" : "sm:left-0",
                                     "bg-black/60 border-white/20"
                                   )}>
                                     {quickReactionEmojis.map((emoji) => (
