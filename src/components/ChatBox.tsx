@@ -320,6 +320,7 @@ export const ChatBox: React.FC<ChatBoxProps> = ({
   const typingBroadcastChannelRef = useRef<any>(null);
   const lastSideHeartMessageIdRef = useRef<string | number | null>(null);
   const statsRefreshTimerRef = useRef<number | undefined>(undefined);
+  const statsHeartbeatRef = useRef<number | undefined>(undefined);
   const heartRainCleanupRef = useRef<number | undefined>(undefined);
   const prevHeartEnergyRef = useRef(0);
   const animatedHeartEnergyRef = useRef(0);
@@ -694,7 +695,11 @@ export const ChatBox: React.FC<ChatBoxProps> = ({
         .lt('created_at', startOfTomorrow.toISOString());
 
       const todayCount = count ?? 0;
-      setDailyHeartEnergy(Math.min(100, todayCount));
+      if (todayCount <= 0) {
+        setDailyHeartEnergy(0);
+      } else {
+        setDailyHeartEnergy(Math.min(100, todayCount));
+      }
 
       const [low, high] = currentUser.id < receiver.id
         ? [currentUser.id, receiver.id]
@@ -724,9 +729,20 @@ export const ChatBox: React.FC<ChatBoxProps> = ({
       refreshDailyLoveStats();
     }, 120);
 
+    if (statsHeartbeatRef.current) {
+      window.clearInterval(statsHeartbeatRef.current);
+    }
+    // Keep day-bound stats fresh even when there are no new messages.
+    statsHeartbeatRef.current = window.setInterval(() => {
+      refreshDailyLoveStats();
+    }, 60 * 1000);
+
     return () => {
       if (statsRefreshTimerRef.current) {
         window.clearTimeout(statsRefreshTimerRef.current);
+      }
+      if (statsHeartbeatRef.current) {
+        window.clearInterval(statsHeartbeatRef.current);
       }
     };
   }, [currentUser.id, receiver.id, messages.length]);
