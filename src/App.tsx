@@ -28,6 +28,8 @@ const App: React.FC = () => {
   const [isUpdatingAvatar, setIsUpdatingAvatar] = useState(false);
   const [showAvatarSourceModal, setShowAvatarSourceModal] = useState(false);
   const [avatarLinkInput, setAvatarLinkInput] = useState('');
+  const [avatarLinkError, setAvatarLinkError] = useState('');
+  const [isValidatingAvatarLink, setIsValidatingAvatarLink] = useState(false);
   const [isEditingName, setIsEditingName] = useState(false);
   const [tempName, setTempName] = useState('');
   const [isPrivateMode, setIsPrivateMode] = useState(false);
@@ -260,7 +262,62 @@ const App: React.FC = () => {
     setCurrentUser(null);
   };
 
-  const handleAvatarClick = () => setShowAvatarSourceModal(true);
+  const normalizeHttpUrl = (raw: string) => {
+    const trimmed = raw.trim();
+    if (!trimmed) return '';
+    return /^https?:\/\//i.test(trimmed) ? trimmed : `https://${trimmed}`;
+  };
+
+  const probeImageUrl = (url: string, timeoutMs = 7000) =>
+    new Promise<boolean>((resolve) => {
+      const img = new Image();
+      let finished = false;
+
+      const done = (ok: boolean) => {
+        if (finished) return;
+        finished = true;
+        window.clearTimeout(timeout);
+        img.onload = null;
+        img.onerror = null;
+        resolve(ok);
+      };
+
+      const timeout = window.setTimeout(() => done(false), timeoutMs);
+      img.onload = () => done(true);
+      img.onerror = () => done(false);
+      img.src = url;
+    });
+
+  const validateAvatarImageUrl = async (raw: string) => {
+    const normalized = normalizeHttpUrl(raw);
+    if (!normalized) {
+      return { ok: false as const, normalized: '', error: 'Vui long nhap link anh dai dien.' };
+    }
+
+    let parsed: URL;
+    try {
+      parsed = new URL(normalized);
+    } catch {
+      return { ok: false as const, normalized: '', error: 'Link khong dung dinh dang URL.' };
+    }
+
+    if (!['http:', 'https:'].includes(parsed.protocol)) {
+      return { ok: false as const, normalized: '', error: 'Chi ho tro link http/https.' };
+    }
+
+    const canLoad = await probeImageUrl(parsed.toString());
+    if (!canLoad) {
+      return { ok: false as const, normalized: '', error: 'Link anh khong hop le hoac khong the tai.' };
+    }
+
+    return { ok: true as const, normalized: parsed.toString(), error: '' };
+  };
+
+  const handleAvatarClick = () => {
+    setAvatarLinkError('');
+    setAvatarLinkInput('');
+    setShowAvatarSourceModal(true);
+  };
 
   const handleAvatarChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const inputEl = e.currentTarget;
@@ -426,74 +483,74 @@ const App: React.FC = () => {
                        )}
                     </div>
                   </div>
-               </div>
+                </div>
             </div>
 
-            <div className="flex-1 flex flex-col">
-              <h4 className="text-[10px] font-black text-rose-600 dark:text-rose-400 uppercase tracking-[0.2em] flex items-center justify-center px-10 mb-6">
-                 <HeartIcon className="w-3 h-3 mr-2 fill-rose-600 dark:fill-rose-400" /> Một nửa của tôi
-              </h4>
-              
-              {partner ? (
-                <div 
-                  onClick={handlePartnerCardClick}
-                  onDoubleClick={() => {
-                    console.log('💋 [Interaction] Sidebar Double-tap! Sending kiss through the heart...');
-                    setEffectType('kiss');
-                    setEffectTrigger(prev => prev + 1);
-                    setTimeout(() => setEffectType('none'), 3000);
-                  }}
-                  className={cn(
-                    "flex-1 w-full flex flex-col items-center justify-center p-12 py-14 rounded-none transition-all duration-1000 relative group border-t cursor-pointer active:scale-[0.99] overflow-hidden bg-gradient-to-b from-pink-100/90 via-rose-200/60 to-pink-200/90 dark:from-pink-900/30 dark:via-rose-950/40 dark:to-slate-900/60 backdrop-blur-3xl",
-                    selectedUser?.id === partner.id ? "border-rose-400/20 dark:border-rose-500/10" : "border-transparent text-gray-400"
-                  )}
-                >
-                  {/* Floating Ethereal SVG Hearts Animation */}
-                  <div className="absolute inset-0 pointer-events-none opacity-40 overflow-hidden">
-                    {[...Array(10)].map((_, i) => (
-                      <div 
-                        key={i}
-                        className="absolute bottom-[-50px] animate-float-up"
-                        style={{
-                          left: `${Math.random() * 100}%`,
-                          animationDuration: `${Math.random() * 6 + 4}s`,
-                          animationDelay: `${Math.random() * 5}s`,
-                          transform: `scale(${Math.random() * 1 + 0.5})`
-                        }}
-                      >
-                         <svg width="24" height="24" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg" className="drop-shadow-[0_0_8px_rgba(244,63,94,0.4)]">
-                            <path d="M11.645 20.91l-.007-.003-.022-.012a15.247 15.247 0 01-.383-.218 25.18 25.18 0 01-4.244-3.17C4.688 15.36 2.25 12.174 2.25 8.25 2.25 5.322 4.714 3 7.5 3c1.372 0 2.615.553 3.52 1.448l.98.966.98-.966c.905-.895 2.148-1.448 3.52-1.448 2.786 0 5.25 2.322 5.25 5.25 0 3.924-2.438 7.11-4.74 9.259a25.181 25.181 0 01-4.244 3.17 15.116 15.116 0 01-.383.219l-.022.012-.007.004-.003.001z" fill="url(#heart-grad)" />
-                            <defs>
-                               <linearGradient id="heart-grad" x1="2.25" y1="3" x2="21.75" y2="20.91" gradientUnits="userSpaceOnUse">
-                                  <stop stopColor="#fb7185" />
-                                  <stop offset="1" stopColor="#e11d48" />
-                               </linearGradient>
-                            </defs>
-                         </svg>
-                      </div>
-                    ))}
-                  </div>
-
-                  <div className="relative mb-10 z-10">
-                    <div className={cn("w-40 h-40 rounded-full bg-gradient-to-tr from-pink-100 to-rose-100 dark:from-slate-700 dark:to-slate-800 flex items-center justify-center text-pink-500 font-black overflow-hidden border-8 border-white dark:border-slate-900 shadow-2xl transition-all duration-1000 group-hover:scale-105", isPrivateMode && "blur-2xl grayscale")}>
-                      {partner.avatar_url ? <img src={partner.avatar_url} className="w-full h-full object-cover" /> : <span className="text-5xl">{partner.username.substring(0, 2).toUpperCase()}</span>}
-                    </div>
-                    {isUserOnline(partner.id) && (
-                      <div className="absolute bottom-2 right-4 w-10 h-10 bg-green-500 border-4 border-white dark:border-slate-900 rounded-full shadow-lg animate-pulse" />
+              <div className="flex-1 flex flex-col">
+                <h4 className="text-[10px] font-black text-rose-600 dark:text-rose-400 uppercase tracking-[0.2em] flex items-center justify-center px-10 mb-6">
+                   <HeartIcon className="w-3 h-3 mr-2 fill-rose-600 dark:fill-rose-400" /> Một nửa của tôi
+                </h4>
+                
+                {partner ? (
+                  <div 
+                    onClick={handlePartnerCardClick}
+                    onDoubleClick={() => {
+                      console.log('💋 [Interaction] Sidebar Double-tap! Sending kiss through the heart...');
+                      setEffectType('kiss');
+                      setEffectTrigger(prev => prev + 1);
+                      setTimeout(() => setEffectType('none'), 3000);
+                    }}
+                    className={cn(
+                      "flex-1 w-full flex flex-col items-center justify-center p-12 py-14 rounded-none transition-all duration-1000 relative group border-t cursor-pointer active:scale-[0.99] overflow-hidden bg-gradient-to-b from-pink-100/90 via-rose-200/60 to-pink-200/90 dark:from-pink-900/30 dark:via-rose-950/40 dark:to-slate-900/60 backdrop-blur-3xl",
+                      selectedUser?.id === partner.id ? "border-rose-400/20 dark:border-rose-500/10" : "border-transparent text-gray-400"
                     )}
+                  >
+                    {/* Floating Ethereal SVG Hearts Animation */}
+                    <div className="absolute inset-0 pointer-events-none opacity-40 overflow-hidden">
+                      {[...Array(10)].map((_, i) => (
+                        <div 
+                          key={i}
+                          className="absolute bottom-[-50px] animate-float-up"
+                          style={{
+                            left: `${Math.random() * 100}%`,
+                            animationDuration: `${Math.random() * 6 + 4}s`,
+                            animationDelay: `${Math.random() * 5}s`,
+                            transform: `scale(${Math.random() * 1 + 0.5})`
+                          }}
+                        >
+                           <svg width="24" height="24" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg" className="drop-shadow-[0_0_8px_rgba(244,63,94,0.4)]">
+                              <path d="M11.645 20.91l-.007-.003-.022-.012a15.247 15.247 0 01-.383-.218 25.18 25.18 0 01-4.244-3.17C4.688 15.36 2.25 12.174 2.25 8.25 2.25 5.322 4.714 3 7.5 3c1.372 0 2.615.553 3.52 1.448l.98.966.98-.966c.905-.895 2.148-1.448 3.52-1.448 2.786 0 5.25 2.322 5.25 5.25 0 3.924-2.438 7.11-4.74 9.259a25.181 25.181 0 01-4.244 3.17 15.116 15.116 0 01-.383.219l-.022.012-.007.004-.003.001z" fill="url(#heart-grad)" />
+                              <defs>
+                                 <linearGradient id="heart-grad" x1="2.25" y1="3" x2="21.75" y2="20.91" gradientUnits="userSpaceOnUse">
+                                    <stop stopColor="#fb7185" />
+                                    <stop offset="1" stopColor="#e11d48" />
+                                 </linearGradient>
+                              </defs>
+                           </svg>
+                        </div>
+                      ))}
+                    </div>
+
+                    <div className="relative mb-10 z-10">
+                      <div className={cn("w-40 h-40 rounded-full bg-gradient-to-tr from-pink-100 to-rose-100 dark:from-slate-700 dark:to-slate-800 flex items-center justify-center text-pink-500 font-black overflow-hidden border-8 border-white dark:border-slate-900 shadow-2xl transition-all duration-1000 group-hover:scale-105", isPrivateMode && "blur-2xl grayscale")}>
+                        {partner.avatar_url ? <img src={partner.avatar_url} className="w-full h-full object-cover" /> : <span className="text-5xl">{partner.username.substring(0, 2).toUpperCase()}</span>}
+                      </div>
+                      {isUserOnline(partner.id) && (
+                        <div className="absolute bottom-2 right-4 w-10 h-10 bg-green-500 border-4 border-white dark:border-slate-900 rounded-full shadow-lg animate-pulse" />
+                      )}
+                    </div>
+                    <div className="text-center w-full relative z-10">
+                      <h4 className={cn("font-black transition-all duration-700 text-3xl truncate text-[var(--text-main)]", isPrivateMode && "blur-[12px]")}>
+                        {isPrivateMode ? "Secret Love" : partner.username}
+                      </h4>
+                    </div>
                   </div>
-                  <div className="text-center w-full relative z-10">
-                    <h4 className={cn("font-black transition-all duration-700 text-3xl truncate text-[var(--text-main)]", isPrivateMode && "blur-[12px]")}>
-                      {isPrivateMode ? "Secret Love" : partner.username}
-                    </h4>
+                ) : (
+                  <div className="p-10 border-2 border-dashed border-pink-100 dark:border-slate-800 rounded-none text-center m-6">
+                     <p className="text-[10px] font-black text-rose-500 dark:text-rose-600 uppercase tracking-widest leading-relaxed">Đang chờ sự hiện diện của người thương...</p>
                   </div>
-                </div>
-              ) : (
-                <div className="p-10 border-2 border-dashed border-pink-100 dark:border-slate-800 rounded-none text-center m-6">
-                   <p className="text-[10px] font-black text-rose-500 dark:text-rose-600 uppercase tracking-widest leading-relaxed">Đang chờ sự hiện diện của người thương...</p>
-                </div>
-              )}
-            </div>
+                )}
+              </div>
           </div>
         </div>
 
@@ -569,7 +626,15 @@ const App: React.FC = () => {
                     <h2 className="text-lg sm:text-xl font-black">Diện mạo mới 🌹</h2>
                     <p className="text-[9px] sm:text-[10px] text-white/50 font-bold uppercase tracking-widest mt-1">Chọn nguồn ảnh đại diện của bạn</p>
                  </div>
-                 <button onClick={() => setShowAvatarSourceModal(false)} className="p-2 hover:bg-white/10 rounded-full transition-all text-white/50 group"><X className="w-6 h-6 group-hover:rotate-90 transition-transform" /></button>
+                 <button
+                   onClick={() => {
+                     setShowAvatarSourceModal(false);
+                     setAvatarLinkError('');
+                   }}
+                   className="p-2 hover:bg-white/10 rounded-full transition-all text-white/50 group"
+                 >
+                   <X className="w-6 h-6 group-hover:rotate-90 transition-transform" />
+                 </button>
               </div>
 
               <div className="p-8 space-y-6">
@@ -600,31 +665,45 @@ const App: React.FC = () => {
                        <input 
                          type="text" 
                          value={avatarLinkInput}
-                         onChange={(e) => setAvatarLinkInput(e.target.value)}
+                         onChange={(e) => {
+                           setAvatarLinkInput(e.target.value);
+                           if (avatarLinkError) setAvatarLinkError('');
+                         }}
                          placeholder="Dán link ảnh đại diện..." 
                          className="flex-1 bg-transparent border-none text-white text-xs px-4 outline-none font-medium placeholder:text-white/20"
                        />
                        <button 
                          onClick={async () => {
-                            if (avatarLinkInput.startsWith('http')) {
-                               setIsUpdatingAvatar(true);
-                               console.log('🌹 [Avatar] Updating via link:', avatarLinkInput);
-                               const { error } = await supabase
-                                 .from('profiles')
-                                 .update({ avatar_url: avatarLinkInput })
-                                 .eq('id', currentUser?.id);
-                               
-                               if (!error) {
-                                 setAvatarLinkInput('');
-                                 setShowAvatarSourceModal(false);
-                                 setTimeout(() => window.location.reload(), 500); 
-                               }
-                               setIsUpdatingAvatar(false);
+                            if (isValidatingAvatarLink || !currentUser) return;
+                            setIsValidatingAvatarLink(true);
+                            setAvatarLinkError('');
+
+                            const result = await validateAvatarImageUrl(avatarLinkInput);
+                            if (!result.ok) {
+                              setAvatarLinkError(result.error);
+                              setIsValidatingAvatarLink(false);
+                              return;
                             }
+
+                            setIsUpdatingAvatar(true);
+                            await updateProfile({ avatar_url: result.normalized });
+                            setAvatarLinkInput('');
+                            setShowAvatarSourceModal(false);
+                            setIsUpdatingAvatar(false);
+                            setIsValidatingAvatarLink(false);
                          }}
-                         className="bg-white text-rose-600 px-5 py-3 rounded-2xl font-black text-[10px] shadow-lg hover:scale-105 active:scale-95 transition-all"
-                       >Áp dụng</button>
+                         disabled={isValidatingAvatarLink || isUpdatingAvatar}
+                         className={cn(
+                           "px-5 py-3 rounded-2xl font-black text-[10px] shadow-lg active:scale-95 transition-all",
+                           (isValidatingAvatarLink || isUpdatingAvatar)
+                             ? "bg-white/70 text-rose-400 cursor-not-allowed"
+                             : "bg-white text-rose-600 hover:scale-105"
+                         )}
+                       >{isValidatingAvatarLink ? 'Dang kiem tra...' : 'Áp dụng'}</button>
                     </div>
+                    {avatarLinkError && (
+                      <p className="-mt-1 text-[10px] font-semibold text-rose-200">{avatarLinkError}</p>
+                    )}
                  </div>
               </div>
            </div>

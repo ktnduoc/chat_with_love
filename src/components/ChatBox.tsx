@@ -281,6 +281,11 @@ export const ChatBox: React.FC<ChatBoxProps> = ({
   const [showImageSourceModal, setShowImageSourceModal] = useState(false);
   const [bgLinkInput, setBgLinkInput] = useState('');
   const [imageLinkInput, setImageLinkInput] = useState('');
+  const [imageLinkError, setImageLinkError] = useState('');
+  const [isValidatingImageLink, setIsValidatingImageLink] = useState(false);
+  const [stickerLinkInput, setStickerLinkInput] = useState('');
+  const [stickerLinkError, setStickerLinkError] = useState('');
+  const [isAddingStickerFromLink, setIsAddingStickerFromLink] = useState(false);
   const [showMemorySidebar, setShowMemorySidebar] = useState(false);
   const [memoryTab, setMemoryTab] = useState<'media' | 'links' | 'search'>('media');
   const [searchQuery, setSearchQuery] = useState('');
@@ -351,6 +356,57 @@ export const ChatBox: React.FC<ChatBoxProps> = ({
     const compact = emoji.replace(/\uFE0F/g, '');
     if (compact === '❤' || compact === '♥' || compact === '🩷') return '❤️';
     return emoji;
+  };
+
+  const normalizeHttpUrl = (raw: string) => {
+    const trimmed = raw.trim();
+    if (!trimmed) return '';
+    return /^https?:\/\//i.test(trimmed) ? trimmed : `https://${trimmed}`;
+  };
+
+  const probeImageUrl = (url: string, timeoutMs = 7000) =>
+    new Promise<boolean>((resolve) => {
+      const img = new Image();
+      let finished = false;
+
+      const done = (ok: boolean) => {
+        if (finished) return;
+        finished = true;
+        window.clearTimeout(timeout);
+        img.onload = null;
+        img.onerror = null;
+        resolve(ok);
+      };
+
+      const timeout = window.setTimeout(() => done(false), timeoutMs);
+      img.onload = () => done(true);
+      img.onerror = () => done(false);
+      img.src = url;
+    });
+
+  const validateRemoteImageUrl = async (raw: string) => {
+    const normalized = normalizeHttpUrl(raw);
+    if (!normalized) {
+      return { ok: false as const, normalized: '', error: 'Vui lòng nhập link ảnh.' };
+    }
+
+    let parsed: URL;
+    try {
+      parsed = new URL(normalized);
+    } catch {
+      return { ok: false as const, normalized: '', error: 'Link không đúng định dạng URL.' };
+    }
+
+    if (!['http:', 'https:'].includes(parsed.protocol)) {
+      return { ok: false as const, normalized: '', error: 'Chỉ hỗ trợ link http/https.' };
+    }
+
+    const canLoad = await probeImageUrl(parsed.toString());
+    if (!canLoad) {
+      return { ok: false as const, normalized: '', error: 'Link ảnh không hợp lệ hoặc không thể tải.' };
+    }
+
+    return { ok: true as const, normalized: parsed.toString(), error: '' };
   };
   const incomingDeleteRequestMessageIds = new Set(incomingDeleteRequests.map(r => r.message_id));
   const activeIncomingDeleteRequest = incomingDeleteRequests[0] ?? null;
@@ -3140,21 +3196,40 @@ export const ChatBox: React.FC<ChatBoxProps> = ({
                   <input
                     type="text"
                     value={imageLinkInput}
-                    onChange={(e) => setImageLinkInput(e.target.value)}
+                    onChange={(e) => {
+                      setImageLinkInput(e.target.value);
+                      if (imageLinkError) setImageLinkError('');
+                    }}
                     placeholder="https://example.com/image.jpg"
                     className="flex-1 bg-transparent border-none text-white text-xs px-4 outline-none font-medium placeholder:text-white/20"
                   />
                   <button
                     onClick={async () => {
-                      if (imageLinkInput.startsWith('http')) {
-                        await sendMessage('', imageLinkInput);
-                        setImageLinkInput('');
-                        setShowImageSourceModal(false);
+                      if (isValidatingImageLink) return;
+                      setIsValidatingImageLink(true);
+                      setImageLinkError('');
+                      const result = await validateRemoteImageUrl(imageLinkInput);
+                      if (!result.ok) {
+                        setImageLinkError(result.error);
+                        setIsValidatingImageLink(false);
+                        return;
                       }
+
+                      await sendMessage('', result.normalized);
+                      setImageLinkInput('');
+                      setShowImageSourceModal(false);
+                      setIsValidatingImageLink(false);
                     }}
-                    className="bg-pink-500 hover:bg-pink-600 text-white px-5 py-3 rounded-2xl font-bold text-[9px] sm:text-[10px] shadow-lg shadow-pink-500/20 transition-all active:scale-95 whitespace-nowrap"
-                  >Gửi</button>
+                    disabled={isValidatingImageLink}
+                    className={cn(
+                      "text-white px-5 py-3 rounded-2xl font-bold text-[9px] sm:text-[10px] shadow-lg shadow-pink-500/20 transition-all active:scale-95 whitespace-nowrap",
+                      isValidatingImageLink ? "bg-pink-400/70 cursor-not-allowed" : "bg-pink-500 hover:bg-pink-600"
+                    )}
+                  >{isValidatingImageLink ? 'Đang kiểm tra...' : 'Gửi'}</button>
                 </div>
+                {imageLinkError && (
+                  <p className="-mt-1 text-[10px] font-semibold text-rose-300">{imageLinkError}</p>
+                )}
               </div>
             </div>
           </div>
@@ -3181,29 +3256,57 @@ export const ChatBox: React.FC<ChatBoxProps> = ({
                     <div className="flex-1 w-full">
                        <input 
                          type="text" 
-                         id="sticker-link-input"
+                         value={stickerLinkInput}
+                         onChange={(e) => {
+                           setStickerLinkInput(e.target.value);
+                           if (stickerLinkError) setStickerLinkError('');
+                         }}
                          placeholder="Dán link ảnh nhãn dán vào đây... (Pinterest, Google, etc.)" 
                          className="w-full bg-white dark:bg-slate-900 border border-pink-100 dark:border-slate-800 rounded-2xl px-5 py-3.5 text-sm outline-none focus:ring-2 focus:ring-pink-400 transition-all font-medium"
                        />
                     </div>
                     <button 
                       onClick={async () => {
-                        const input = document.getElementById('sticker-link-input') as HTMLInputElement;
-                        const url = input?.value;
-                        if (url && url.startsWith('http')) {
-                          console.log('🚀 [Sticker] Adding from link:', url);
-                          const { error } = await supabase.from('stickers').insert([{ user_id: currentUser.id, image_url: url }]);
-                          if (!error) {
-                            input.value = '';
-                            fetchStickers();
-                          }
+                        if (isAddingStickerFromLink) return;
+                        setIsAddingStickerFromLink(true);
+                        setStickerLinkError('');
+
+                        const result = await validateRemoteImageUrl(stickerLinkInput);
+                        if (!result.ok) {
+                          setStickerLinkError(result.error);
+                          setIsAddingStickerFromLink(false);
+                          return;
                         }
+
+                        console.log('🚀 [Sticker] Adding from link:', result.normalized);
+                        const { error } = await supabase.from('stickers').insert([{ user_id: currentUser.id, image_url: result.normalized }]);
+                        if (error) {
+                          setStickerLinkError('Không thể thêm nhãn dán từ link này.');
+                          setIsAddingStickerFromLink(false);
+                          return;
+                        }
+
+                        setStickerLinkInput('');
+                        fetchStickers();
+                        setIsAddingStickerFromLink(false);
                       }}
-                      className="whitespace-nowrap bg-gradient-to-tr from-pink-500 to-rose-600 text-white px-8 py-3.5 rounded-2xl font-black text-sm shadow-xl shadow-pink-200 dark:shadow-rose-900/30 hover:scale-105 active:scale-95 transition-all flex items-center gap-2"
+                      disabled={isAddingStickerFromLink}
+                      className={cn(
+                        "whitespace-nowrap text-white px-8 py-3.5 rounded-2xl font-black text-sm shadow-xl dark:shadow-rose-900/30 active:scale-95 transition-all flex items-center gap-2",
+                        isAddingStickerFromLink
+                          ? "bg-gradient-to-tr from-pink-400/80 to-rose-500/80 cursor-not-allowed"
+                          : "bg-gradient-to-tr from-pink-500 to-rose-600 shadow-pink-200 hover:scale-105"
+                      )}
                     >
-                       <Link2 className="w-4 h-4" /> Thêm nhanh
+                       <Link2 className="w-4 h-4" /> {isAddingStickerFromLink ? 'Đang kiểm tra...' : 'Thêm nhanh'}
                     </button>
+                    {stickerLinkError && (
+                      <p className="w-full text-[11px] font-semibold text-rose-500 dark:text-rose-300 sm:hidden">{stickerLinkError}</p>
+                    )}
                  </div>
+                 {stickerLinkError && (
+                   <p className="-mt-7 mb-7 hidden sm:block text-[11px] font-semibold text-rose-500 dark:text-rose-300">{stickerLinkError}</p>
+                 )}
 
                  <div className="grid grid-cols-3 sm:grid-cols-4 md:grid-cols-5 gap-6">
                     {/* Upload New Sticker Action - NOW DARK MODE FRIENDLY */}
