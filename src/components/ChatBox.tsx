@@ -26,6 +26,15 @@ function renderTwemoji(text: string) {
   });
 }
 
+function getTwemojiSvgUrl(emoji: string) {
+  const rawCodepoint = twemoji.convert.toCodePoint(emoji);
+  const normalizedCodepoint = rawCodepoint
+    .split('-')
+    .filter(part => part !== 'fe0f')
+    .join('-');
+  return `https://cdn.jsdelivr.net/gh/twitter/twemoji@14.0.2/assets/svg/${normalizedCodepoint}.svg`;
+}
+
 const SmartImage: React.FC<{ src: string; className?: string; alt?: string }> = ({ src, className, alt }) => {
   const [isLoaded, setIsLoaded] = useState(false);
   return (
@@ -68,6 +77,17 @@ interface ChatBoxProps {
   isFocusedMode?: boolean;
   onToggleFocus?: () => void;
   setTypingStatus?: (isTyping: boolean) => Promise<void> | void;
+}
+interface MessageReactionRow {
+  message_id: string | number;
+  user_id: string;
+  emoji: string;
+}
+
+interface MessageReactionView {
+  emoji: string;
+  count: number;
+  reactedByMe: boolean;
 }
 
 export const ChatBox: React.FC<ChatBoxProps> = ({ 
@@ -147,13 +167,165 @@ export const ChatBox: React.FC<ChatBoxProps> = ({
   const suppressNextStickerClickRef = useRef(false);
   const flamePointerOffsetRef = useRef({ x: 0, y: 0 });
   const flameMovedDuringDragRef = useRef(false);
+  const [messageReactions, setMessageReactions] = useState<Record<string, MessageReactionView[]>>({});
+  const [activeReactionPickerFor, setActiveReactionPickerFor] = useState<string | number | null>(null);
+  const [isReactionFeatureEnabled, setIsReactionFeatureEnabled] = useState(true);
+  const quickReactionEmojis = ['❤️', '💖', '🧡', '💛', '💚', '💙', '💜'];
 
   const { messages, setMessages, hasMore, sendMessage, openMessage, uploadImage, saveAsSticker, loadMore } = useChat(currentUser.id, receiver.id, false);
+
+  const toMessageKey = (id: string | number) => String(id);
+  const normalizeHeartEmoji = (emoji: string) => (emoji === '🩷' ? '💖' : emoji);
+
+  const mapReactions = (rows: MessageReactionRow[]) => {
+    const grouped = new Map<string, Map<string, { count: number; reactedByMe: boolean }>>();
+
+    for (const row of rows) {
+      const messageKey = toMessageKey(row.message_id);
+      const normalizedEmoji = normalizeHeartEmoji(row.emoji);
+      if (!quickReactionEmojis.includes(normalizedEmoji)) continue;
+
+      const byEmoji = grouped.get(messageKey) ?? new Map<string, { count: number; reactedByMe: boolean }>();
+      const item = byEmoji.get(normalizedEmoji) ?? { count: 0, reactedByMe: false };
+      item.count += 1;
+      if (row.user_id === currentUser.id) item.reactedByMe = true;
+      byEmoji.set(normalizedEmoji, item);
+      grouped.set(messageKey, byEmoji);
+    }
+
+    const next: Record<string, MessageReactionView[]> = {};
+    for (const [messageKey, byEmoji] of grouped.entries()) {
+      next[messageKey] = Array.from(byEmoji.entries())
+        .map(([emoji, val]) => ({ emoji, count: val.count, reactedByMe: val.reactedByMe }))
+        .sort((a, b) => b.count - a.count);
+    }
+    return next;
+  };
 
   const pushTypingStatus = async (isTyping: boolean) => {
     if (!setTypingStatusGlobal) return;
     await setTypingStatusGlobal(isTyping);
   };
+
+  const ensureReactionFeatureEnabled = async () => {
+    if (isReactionFeatureEnabled) return true;
+
+    const { error } = await supabase
+      .from('message_reactions')
+      .select('id')
+      .limit(1);
+
+    if (error) {
+      return false;
+    }
+
+    setIsReactionFeatureEnabled(true);
+    return true;
+  };
+
+  const refreshMessageReactions = async (messageIds?: Array<string | number>) => {
+    if (!isReactionFeatureEnabled) return;
+
+    const targetIds = (messageIds ?? messages.map(m => m.id)).filter(id => !String(id).startsWith('temp-'));
+    if (!targetIds.length) {
+      if (!messageIds) setMessageReactions({});
+      return;
+    }
+
+    const { data, error } = await supabase
+      .from('message_reactions')
+      .select('message_id,user_id,emoji')
+      .in('message_id', targetIds as any);
+
+    if (error) {
+      setIsReactionFeatureEnabled(false);
+      console.warn('⚠️ [Reaction] message_reactions table unavailable:', error.message);
+      return;
+    }
+
+    const mapped = mapReactions((data ?? []) as MessageReactionRow[]);
+    if (!messageIds) {
+      setMessageReactions(mapped);
+      return;
+    }
+
+    setMessageReactions(prev => {
+      const next = { ...prev };
+      for (const id of targetIds) {
+        const key = toMessageKey(id);
+        if (mapped[key]) next[key] = mapped[key];
+        else delete next[key];
+      }
+      return next;
+    });
+  };
+
+  const toggleMessageReaction = async (messageId: string | number, emoji: string) => {
+    if (String(messageId).startsWith('temp-')) return;
+    const normalizedEmoji = normalizeHeartEmoji(emoji);
+    if (!quickReactionEmojis.includes(normalizedEmoji)) return;
+
+    if (!isReactionFeatureEnabled) {
+      const enabled = await ensureReactionFeatureEnabled();
+      if (!enabled) {
+        console.warn('⚠️ [Reaction] table not ready yet.');
+        return;
+      }
+    }
+
+    const messageKey = toMessageKey(messageId);
+    const current = messageReactions[messageKey] ?? [];
+    const existing = current.find(r => r.emoji === normalizedEmoji && r.reactedByMe);
+
+    if (existing) {
+      const { error } = await supabase
+        .from('message_reactions')
+        .delete()
+        .eq('message_id', messageId as any)
+        .eq('user_id', currentUser.id)
+        .in('emoji', [normalizedEmoji, '🩷']);
+      if (error) {
+        console.warn('⚠️ [Reaction] failed to remove reaction:', error.message);
+        return;
+      }
+    } else {
+      const { error } = await supabase
+        .from('message_reactions')
+        .insert([{ message_id: messageId as any, user_id: currentUser.id, emoji: normalizedEmoji }]);
+      if (error) {
+        console.warn('⚠️ [Reaction] failed to add reaction:', error.message);
+        return;
+      }
+    }
+
+    setActiveReactionPickerFor(null);
+    await refreshMessageReactions([messageId]);
+  };
+
+  useEffect(() => {
+    if (!isReactionFeatureEnabled) return;
+    refreshMessageReactions();
+  }, [messages.length, currentUser.id, receiver.id, isReactionFeatureEnabled]);
+
+  useEffect(() => {
+    if (isReactionFeatureEnabled) return;
+    ensureReactionFeatureEnabled();
+  }, [currentUser.id, receiver.id, isReactionFeatureEnabled]);
+
+  useEffect(() => {
+    if (!isReactionFeatureEnabled) return;
+
+    const channel = supabase
+      .channel(`message-reactions-${currentUser.id}-${receiver.id}`)
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'message_reactions' }, () => {
+        refreshMessageReactions();
+      })
+      .subscribe();
+
+    return () => {
+      supabase.removeChannel(channel);
+    };
+  }, [currentUser.id, receiver.id, isReactionFeatureEnabled]);
 
   useEffect(() => {
     const refreshDailyLoveStats = async () => {
@@ -1526,6 +1698,8 @@ export const ChatBox: React.FC<ChatBoxProps> = ({
             const isLastRead = msg.id === delayedLastReadId;
             const isUnreadDivider = msg.id === firstUnreadId;
             const hasExplosion = activeExplosions[msg.id];
+            const reactionItems = messageReactions[toMessageKey(msg.id)] ?? [];
+            const isReactionPickerOpen = activeReactionPickerFor === msg.id;
             
             // Check if this is an "Old" message being loaded historically
             // We give historical messages instant presence (no fade-in) for stability
@@ -1643,6 +1817,67 @@ export const ChatBox: React.FC<ChatBoxProps> = ({
                           {new Date(msg.created_at).toLocaleTimeString('vi-VN', { hour: '2-digit', minute: '2-digit', hour12: false })}
                         </div>
                       </>
+                    )}
+
+                    {!String(msg.id).startsWith('temp-') && (
+                      <div className={cn("mt-1.5 flex items-center gap-1.5 flex-wrap", isMe ? "justify-end" : "justify-start")}>
+                        {reactionItems.map((item) => (
+                          <button
+                            key={`${msg.id}-${item.emoji}`}
+                            type="button"
+                            onClick={() => toggleMessageReaction(msg.id, item.emoji)}
+                            className={cn(
+                              "px-2 py-0.5 rounded-full text-xs border transition-all",
+                              item.reactedByMe
+                                ? "bg-rose-500/20 border-rose-400/50 text-rose-300"
+                                : "bg-white/10 border-white/20 text-slate-200"
+                            )}
+                            title="Bỏ cảm xúc"
+                          >
+                            <span className="inline-flex items-center gap-1">
+                              <img src={getTwemojiSvgUrl(item.emoji)} alt={item.emoji} className="w-3.5 h-3.5" />
+                              <span>{item.count}</span>
+                            </span>
+                          </button>
+                        ))}
+
+                        <div className="relative">
+                          <button
+                            type="button"
+                            onClick={() => setActiveReactionPickerFor(prev => (prev === msg.id ? null : msg.id))}
+                            className={cn(
+                              "w-6 h-6 rounded-full border flex items-center justify-center transition-all",
+                              isReactionPickerOpen
+                                ? "bg-rose-500/35 border-rose-300/60 text-rose-100"
+                                : isMe
+                                  ? "bg-rose-500/20 border-rose-300/40 text-rose-200 hover:bg-rose-500/30"
+                                  : "bg-cyan-500/20 border-cyan-300/40 text-cyan-100 hover:bg-cyan-500/30"
+                            )}
+                            title="Bày tỏ cảm xúc"
+                          >
+                            <HeartIcon className="w-3.5 h-3.5 fill-current" />
+                          </button>
+
+                          {isReactionPickerOpen && (
+                            <div className={cn(
+                              "absolute z-[1450] bottom-full mb-2 px-2 py-1 rounded-full border backdrop-blur-xl flex items-center gap-1",
+                              isMe ? "right-0" : "left-0",
+                              "bg-black/60 border-white/20"
+                            )}>
+                              {quickReactionEmojis.map((emoji) => (
+                                <button
+                                  key={`${msg.id}-${emoji}`}
+                                  type="button"
+                                  onClick={() => toggleMessageReaction(msg.id, emoji)}
+                                  className="w-6 h-6 flex items-center justify-center hover:scale-125 transition-transform"
+                                >
+                                  <img src={getTwemojiSvgUrl(emoji)} alt={emoji} className="w-5 h-5" />
+                                </button>
+                              ))}
+                            </div>
+                          )}
+                        </div>
+                      </div>
                     )}
                   </div>
                   {isLastRead && (
@@ -2256,8 +2491,8 @@ export const ChatBox: React.FC<ChatBoxProps> = ({
       )}
 
       {viewingSticker && (
-        <div className="fixed inset-0 z-[1600] flex flex-col items-center justify-center bg-black/90 backdrop-blur-xl animate-in fade-in duration-300 pointer-events-auto p-10">
-           <button onClick={() => setViewingSticker(null)} className="absolute top-10 right-10 p-4 bg-white/10 hover:bg-white/20 rounded-full transition-all text-white hover:rotate-90"><X className="w-8 h-8" /></button>
+        <div className="fixed inset-0 z-[1600] flex flex-col items-center justify-center bg-black/90 backdrop-blur-xl animate-in fade-in duration-300 pointer-events-auto p-4 sm:p-10">
+          <button onClick={() => setViewingSticker(null)} className="fixed top-4 right-4 sm:top-8 sm:right-8 z-[1705] p-3 sm:p-4 bg-black/45 hover:bg-black/65 border border-white/30 rounded-full transition-all text-white hover:rotate-90"><X className="w-7 h-7 sm:w-8 sm:h-8" /></button>
            
            <div className="relative max-w-2xl w-full flex flex-col items-center animate-in zoom-in-95 duration-500">
               <div className="bg-white/5 p-4 rounded-3xl border border-white/10 shadow-2xl overflow-hidden mb-10 w-full flex items-center justify-center">
