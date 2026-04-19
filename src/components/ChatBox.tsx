@@ -271,7 +271,13 @@ export const ChatBox: React.FC<ChatBoxProps> = ({
   const [isReactionFeatureEnabled, setIsReactionFeatureEnabled] = useState(true);
   const [incomingDeleteRequests, setIncomingDeleteRequests] = useState<MessageDeleteRequestRow[]>([]);
   const [pendingDeleteRequestMessageIds, setPendingDeleteRequestMessageIds] = useState<Set<string>>(new Set());
+  const [isSendSizing, setIsSendSizing] = useState(false);
+  const [sendTextScale, setSendTextScale] = useState(1);
   const quickReactionEmojis = ['❤️', '💖', '🧡'];
+  const sendDragStartYRef = useRef<number | null>(null);
+  const SEND_TEXT_SCALE_MIN = 0.35;
+  const SEND_TEXT_SCALE_MAX = 3.4;
+  const SEND_TEXT_DRAG_RANGE = 150;
 
   const { messages, setMessages, hasMore, sendMessage, openMessage, uploadImage, saveAsSticker, loadMore } = useChat(currentUser.id, receiver.id, false);
 
@@ -891,7 +897,7 @@ export const ChatBox: React.FC<ChatBoxProps> = ({
     const unreadReceived = messages.filter(m => 
       m.receiver_id === currentUser.id && 
       !m.is_opened && 
-      isNoneEffect(m.effect) && 
+      isNormalChatEffect(m.effect) && 
       !m.id.toString().startsWith('temp-')
     );
     for (const msg of unreadReceived) {
@@ -1017,6 +1023,61 @@ export const ChatBox: React.FC<ChatBoxProps> = ({
     }
   };
 
+  const sendTextWithScale = async (scale: number) => {
+    if (!text.trim()) return;
+    pushTypingStatus(false);
+    broadcastTypingStatus(false);
+
+    const normalizedScale = Math.max(SEND_TEXT_SCALE_MIN, Math.min(SEND_TEXT_SCALE_MAX, scale));
+    const effectValue = Math.abs(normalizedScale - 1) < 0.05
+      ? 'none'
+      : `textsize:${normalizedScale.toFixed(2)}`;
+
+    await sendMessage(text, undefined, effectValue);
+    setText('');
+    setShowEmoji(false);
+    setShowSendActions(false);
+  };
+
+  const getSendScaleFromDelta = (deltaY: number) => {
+    if (deltaY >= 0) {
+      const progress = Math.min(deltaY, SEND_TEXT_DRAG_RANGE) / SEND_TEXT_DRAG_RANGE;
+      return 1 + progress * (SEND_TEXT_SCALE_MAX - 1);
+    }
+
+    const progress = Math.min(Math.abs(deltaY), SEND_TEXT_DRAG_RANGE) / SEND_TEXT_DRAG_RANGE;
+    return 1 - progress * (1 - SEND_TEXT_SCALE_MIN);
+  };
+
+  const getSendScaleLabel = (scale: number) => {
+    if (scale >= 2.2) return 'XL';
+    if (scale >= 1.25) return 'L';
+    if (scale >= 0.85) return 'M';
+    return 'S';
+  };
+
+  const startSendSizeDrag = (startY: number) => {
+    if (!text.trim() || isUploading) return;
+    sendDragStartYRef.current = startY;
+    setSendTextScale(1);
+    setIsSendSizing(true);
+  };
+
+  const moveSendSizeDrag = (currentY: number) => {
+    if (!isSendSizing || sendDragStartYRef.current === null) return;
+    const deltaY = sendDragStartYRef.current - currentY;
+    setSendTextScale(getSendScaleFromDelta(deltaY));
+  };
+
+  const endSendSizeDrag = async (endY: number) => {
+    if (!isSendSizing || sendDragStartYRef.current === null) return;
+    const deltaY = sendDragStartYRef.current - endY;
+    const finalScale = getSendScaleFromDelta(deltaY);
+    setIsSendSizing(false);
+    sendDragStartYRef.current = null;
+    await sendTextWithScale(finalScale);
+  };
+
   const handlePreviewFile = (file: File) => {
     if (!file.type.includes('image')) return;
     setPreviewFile(file);
@@ -1058,7 +1119,13 @@ export const ChatBox: React.FC<ChatBoxProps> = ({
 
   const getEffectKind = (effect?: string) => (effect || 'none').split(':')[0];
   const isHeartEffect = (effect?: string) => getEffectKind(effect) === 'heart';
-  const isNoneEffect = (effect?: string) => getEffectKind(effect) === 'none';
+  const isNormalChatEffect = (effect?: string) => getEffectKind(effect) !== 'heart';
+  const getTextScaleFromEffect = (effect?: string) => {
+    if (getEffectKind(effect) !== 'textsize') return 1;
+    const raw = parseFloat((effect || '').split(':')[1] || '1');
+    if (!Number.isFinite(raw)) return 1;
+    return Math.max(0.75, Math.min(2.2, raw));
+  };
 
   const seasonalBubbleTheme: Record<string, { me: string; partner: string; focusMe: string; focusPartner: string }> = {
     Rose: {
@@ -1170,8 +1237,8 @@ export const ChatBox: React.FC<ChatBoxProps> = ({
     }
   }, [flyingMessages.length, receiver.username]);
   
-  const normalMessages = messages.filter(m => (m.is_opened || isNoneEffect(m.effect)));
-  const firstUnreadId = messages.find(m => m.receiver_id === currentUser.id && !m.is_opened && isNoneEffect(m.effect))?.id;
+  const normalMessages = messages.filter(m => (m.is_opened || isNormalChatEffect(m.effect)));
+  const firstUnreadId = messages.find(m => m.receiver_id === currentUser.id && !m.is_opened && isNormalChatEffect(m.effect))?.id;
   const MAX_RENDERED_MESSAGES = 140;
 
   useEffect(() => {
@@ -1892,6 +1959,9 @@ export const ChatBox: React.FC<ChatBoxProps> = ({
             const reactionItems = messageReactions[toMessageKey(msg.id)] ?? [];
             const isReactionPickerOpen = activeReactionPickerFor === msg.id;
             const hasIncomingDeleteRequest = incomingDeleteRequestMessageIds.has(toMessageKey(msg.id));
+            const textScale = getTextScaleFromEffect(msg.effect);
+            const textFontPx = Math.max(8, Math.min(56, Math.round(15 * textScale)));
+            const textLineHeight = textScale >= 2 ? 1.12 : textScale <= 0.7 ? 1.22 : 1.34;
             
             // Check if this is an "Old" message being loaded historically
             // We give historical messages instant presence (no fade-in) for stability
@@ -1965,13 +2035,15 @@ export const ChatBox: React.FC<ChatBoxProps> = ({
                             isHeartEffect(msg.effect)
                               ? "heart-bubble animate-floating-heart flex items-center justify-center italic font-black text-center" 
                               : cn(
-                                  "px-8 py-5 text-[15px] font-medium rounded-2xl shadow-2xl",
-                                  "px-4 py-3 text-sm sm:px-6 sm:py-4 sm:text-[15px] md:px-8 md:py-5",
+                                  "px-8 py-5 font-medium rounded-2xl shadow-2xl",
+                                  "px-4 py-3 sm:px-6 sm:py-4 md:px-8 md:py-5",
+                                  textScale >= 2 && "font-semibold",
                                   isMe 
                                     ? (isFocusedMode ? `${bubbleTheme.focusMe} rounded-tr-none` : `${bubbleTheme.me} rounded-tr-none`) 
                                     : (isFocusedMode ? `${bubbleTheme.focusPartner} rounded-tl-none` : `${bubbleTheme.partner} rounded-tl-none`)
                                 )
                           )}
+                          style={isHeartEffect(msg.effect) ? undefined : { fontSize: `${textFontPx}px`, lineHeight: textLineHeight }}
                         >
                           {/* UNIVERSAL LINK DETECTION LOGIC */}
                           {msg.content.split(/((?:https?:\/\/|www\.)[^\s]+)/g).map((part, i) => {
@@ -2347,17 +2419,50 @@ export const ChatBox: React.FC<ChatBoxProps> = ({
               )}
             </div>
 
-            <button 
-              ref={sendButtonRef}
-              onClick={() => handleSend()}
-              disabled={!text.trim() || isUploading}
-              className={cn(
-                "shrink-0 w-10 h-10 sm:min-w-[48px] sm:w-12 sm:h-12 rounded-full px-0 flex items-center justify-center transition-all bg-gradient-to-tr from-pink-500 to-rose-600 text-white shadow-lg shadow-pink-500/50 active:scale-90",
-                (!text.trim() || isUploading) ? "grayscale opacity-50 cursor-not-allowed" : "hover:scale-105"
+            <div className="relative shrink-0">
+              {isSendSizing && (
+                <div className="absolute bottom-full right-1/2 translate-x-1/2 mb-2 w-14 h-36 rounded-2xl bg-black/70 border border-white/20 text-white shadow-2xl flex flex-col items-center py-2.5 pointer-events-none">
+                  <span className="text-[9px] font-bold uppercase tracking-wide leading-none">{getSendScaleLabel(sendTextScale)}</span>
+                  <div className="relative mt-2 mb-2 w-2 flex-1 rounded-full bg-white/25 overflow-hidden">
+                    <div
+                      className="absolute left-0 right-0 bottom-0 bg-pink-400/85"
+                      style={{ height: `${((sendTextScale - SEND_TEXT_SCALE_MIN) / (SEND_TEXT_SCALE_MAX - SEND_TEXT_SCALE_MIN)) * 100}%` }}
+                    />
+                    <div
+                      className="absolute left-1/2 -translate-x-1/2 w-4 h-4 rounded-full bg-white border-2 border-pink-400 shadow-lg"
+                      style={{ bottom: `calc(${((sendTextScale - SEND_TEXT_SCALE_MIN) / (SEND_TEXT_SCALE_MAX - SEND_TEXT_SCALE_MIN)) * 100}% - 8px)` }}
+                    />
+                  </div>
+                  <span className="text-[10px] font-black tabular-nums">x{sendTextScale.toFixed(2)}</span>
+                </div>
               )}
-            >
-               <Send className="w-4 h-4 sm:w-5 sm:h-5 ml-0.5" />
-            </button>
+              <button 
+                ref={sendButtonRef}
+                onPointerDown={(e) => {
+                  e.currentTarget.setPointerCapture(e.pointerId);
+                  startSendSizeDrag(e.clientY);
+                }}
+                onPointerMove={(e) => moveSendSizeDrag(e.clientY)}
+                onPointerUp={(e) => {
+                  e.currentTarget.releasePointerCapture(e.pointerId);
+                  endSendSizeDrag(e.clientY);
+                }}
+                onPointerCancel={() => {
+                  setIsSendSizing(false);
+                  sendDragStartYRef.current = null;
+                }}
+                disabled={!text.trim() || isUploading}
+                className={cn(
+                  "shrink-0 w-10 h-10 sm:min-w-[48px] sm:w-12 sm:h-12 rounded-full px-0 flex items-center justify-center transition-all bg-gradient-to-tr from-pink-500 to-rose-600 text-white shadow-lg shadow-pink-500/50 active:scale-90 touch-none select-none",
+                  (!text.trim() || isUploading)
+                    ? "grayscale opacity-50 cursor-not-allowed"
+                    : (isSendSizing ? "scale-110" : "hover:scale-105")
+                )}
+                title="Giữ và kéo lên/xuống để chọn cỡ chữ"
+              >
+                 <Send className="w-4 h-4 sm:w-5 sm:h-5 ml-0.5" />
+              </button>
+            </div>
           </div>
         </div>
       </div>
