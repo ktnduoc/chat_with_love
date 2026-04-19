@@ -2136,13 +2136,24 @@ export const ChatBox: React.FC<ChatBoxProps> = ({
       </div>
 
       {activeIncomingDeleteRequest && (
-        <div className="px-4 sm:px-6 md:px-10 pb-2 z-50">
-          <div className="w-full rounded-2xl border border-amber-300/40 bg-amber-500/15 backdrop-blur-md px-4 py-3 flex flex-col gap-3">
+        <div className="fixed left-1/2 top-[78px] sm:top-[86px] -translate-x-1/2 z-[1600] w-[calc(100%-1.5rem)] sm:w-[calc(100%-3rem)] md:w-[calc(100%-5rem)] max-w-4xl pointer-events-none">
+          <div className={cn(
+            "w-full rounded-2xl border backdrop-blur-md px-4 py-3 flex flex-col gap-3 shadow-2xl pointer-events-auto",
+            isDarkMode
+              ? "border-amber-300/35 bg-amber-900/35"
+              : "border-amber-300/80 bg-amber-100/95"
+          )}>
             <div className="flex-1 min-w-0">
-              <p className="text-xs sm:text-sm text-amber-100 font-semibold">
+              <p className={cn(
+                "text-xs sm:text-sm font-semibold",
+                isDarkMode ? "text-amber-100" : "text-amber-900"
+              )}>
                 Người ấy gửi yêu cầu xóa tin nhắn sau. Bạn có chấp nhận không?
               </p>
-              <p className="mt-1 text-[11px] sm:text-xs text-amber-50/90 truncate">
+              <p className={cn(
+                "mt-1 text-[11px] sm:text-xs truncate",
+                isDarkMode ? "text-amber-50/90" : "text-amber-800"
+              )}>
                 {activeIncomingTargetMessage
                   ? (activeIncomingTargetMessage.image_url
                     ? '[Ảnh/GIF]'
@@ -2154,7 +2165,12 @@ export const ChatBox: React.FC<ChatBoxProps> = ({
               <button
                 type="button"
                 onClick={() => respondDeleteRequest(activeIncomingDeleteRequest, false)}
-                className="h-9 px-2.5 sm:px-3 rounded-xl bg-white/10 border border-white/20 text-white text-xs font-bold"
+                className={cn(
+                  "h-9 px-2.5 sm:px-3 rounded-xl border text-xs font-bold",
+                  isDarkMode
+                    ? "bg-white/10 border-white/20 text-white"
+                    : "bg-white/80 border-amber-400/60 text-amber-900"
+                )}
               >
                 Từ chối
               </button>
