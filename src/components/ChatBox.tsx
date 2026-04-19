@@ -1,5 +1,5 @@
 import React, { useState, useRef, useEffect } from 'react';
-import { Send, Image as ImageIcon, Smile, MoreVertical, Download, Sparkles, Heart as HeartIcon, Plus, X, Check, Loader2, ArrowDown, ImagePlus, Settings, RefreshCw, Minimize2, Link2, Search, ChevronDown, Trash2 } from 'lucide-react';
+import { Send, Image as ImageIcon, Smile, MoreVertical, Download, Sparkles, Heart as HeartIcon, Plus, X, Check, Loader2, ArrowDown, ImagePlus, Settings, RefreshCw, Minimize2, Link2, Search, ChevronDown, Trash2, Reply } from 'lucide-react';
 import EmojiPicker, { Theme } from 'emoji-picker-react';
 import type { Message, Profile, Sticker } from '../types';
 import { useChat } from '../hooks/useChat';
@@ -107,6 +107,7 @@ interface MessageReactionRow {
   message_id: string | number;
   user_id: string;
   emoji: string;
+  created_at?: string;
 }
 
 interface MessageReactionView {
@@ -114,6 +115,27 @@ interface MessageReactionView {
   count: number;
   reactedByMe: boolean;
 }
+
+interface LoveStreakRow {
+  user_low: string;
+  user_high: string;
+  current_streak: number;
+  today_day: string | null;
+  today_has_low: boolean;
+  today_has_high: boolean;
+}
+
+interface HeartRainParticle {
+  id: number;
+  left: number;
+  size: number;
+  duration: number;
+  delay: number;
+  drift: number;
+  opacity: number;
+}
+
+const REACTION_SYNC_RECENT_MESSAGE_LIMIT = 120;
 
 interface MessageDeleteRequestRow {
   id: number;
@@ -237,6 +259,7 @@ export const ChatBox: React.FC<ChatBoxProps> = ({
   const [isComposerFocused, setIsComposerFocused] = useState(false);
   const [showSendActions, setShowSendActions] = useState(false);
   const [showHeaderActions, setShowHeaderActions] = useState(false);
+  const [replyTarget, setReplyTarget] = useState<Message | null>(null);
   const [openingHeartMessage, setOpeningHeartMessage] = useState<Message | null>(null);
   const [openedHeartIds, setOpenedHeartIds] = useState<Set<string | number>>(new Set());
   const [isScratchComplete, setIsScratchComplete] = useState(false);
@@ -249,7 +272,9 @@ export const ChatBox: React.FC<ChatBoxProps> = ({
   const [touchDragPosition, setTouchDragPosition] = useState<{ x: number; y: number } | null>(null);
   const [sideHeartBurstKey, setSideHeartBurstKey] = useState(0);
   const [dailyHeartEnergy, setDailyHeartEnergy] = useState(0);
+  const [animatedHeartEnergy, setAnimatedHeartEnergy] = useState(0);
   const [dailyFireStreak, setDailyFireStreak] = useState(0);
+  const [heartRainParticles, setHeartRainParticles] = useState<HeartRainParticle[]>([]);
   const [hasMutualToday, setHasMutualToday] = useState(false);
   const [showStreakOverlay, setShowStreakOverlay] = useState(false);
   const [previewFireStreak, setPreviewFireStreak] = useState<number | null>(null);
@@ -260,8 +285,10 @@ export const ChatBox: React.FC<ChatBoxProps> = ({
   const typingBroadcastChannelRef = useRef<any>(null);
   const lastSideHeartMessageIdRef = useRef<string | number | null>(null);
   const statsRefreshTimerRef = useRef<number | undefined>(undefined);
-  const lastStreakRefreshAtRef = useRef<number>(0);
-  const lastStreakConversationRef = useRef<string>('');
+  const heartRainCleanupRef = useRef<number | undefined>(undefined);
+  const prevHeartEnergyRef = useRef(0);
+  const animatedHeartEnergyRef = useRef(0);
+  const hasPlayedHeartRainAt100Ref = useRef(false);
   const trashZoneRef = useRef<HTMLDivElement>(null);
   const touchDragStartRef = useRef<{ x: number; y: number } | null>(null);
   const touchDragMovedRef = useRef(false);
@@ -364,9 +391,20 @@ export const ChatBox: React.FC<ChatBoxProps> = ({
   };
 
   const mapReactions = (rows: MessageReactionRow[]) => {
-    const grouped = new Map<string, Map<string, { count: number; reactedByMe: boolean }>>();
+    const latestByUser = new Map<string, MessageReactionRow>();
+    const toTs = (value?: string) => (value ? Date.parse(value) || 0 : 0);
 
     for (const row of rows) {
+      const key = `${toMessageKey(row.message_id)}::${row.user_id}`;
+      const prev = latestByUser.get(key);
+      if (!prev || toTs(row.created_at) >= toTs(prev.created_at)) {
+        latestByUser.set(key, row);
+      }
+    }
+
+    const grouped = new Map<string, Map<string, { count: number; reactedByMe: boolean }>>();
+
+    for (const row of latestByUser.values()) {
       const messageKey = toMessageKey(row.message_id);
       const normalizedEmoji = normalizeReactionEmoji(row.emoji);
 
@@ -386,6 +424,10 @@ export const ChatBox: React.FC<ChatBoxProps> = ({
     }
     return next;
   };
+
+  const reactionListSignature = (items: MessageReactionView[] = []) => (
+    items.map(item => `${item.emoji}:${item.count}:${item.reactedByMe ? 1 : 0}`).join('|')
+  );
 
   const pushTypingStatus = async (isTyping: boolean) => {
     if (!setTypingStatusGlobal) return;
@@ -411,15 +453,16 @@ export const ChatBox: React.FC<ChatBoxProps> = ({
   const refreshMessageReactions = async (messageIds?: Array<string | number>) => {
     if (!isReactionFeatureEnabled) return;
 
-    const targetIds = (messageIds ?? messages.map(m => m.id)).filter(id => !String(id).startsWith('temp-'));
-    if (!targetIds.length) {
-      if (!messageIds) setMessageReactions({});
-      return;
-    }
+    const sourceIds = messageIds
+      ? messageIds
+      : messages.slice(-REACTION_SYNC_RECENT_MESSAGE_LIMIT).map(m => m.id);
+
+    const targetIds = sourceIds.filter(id => !String(id).startsWith('temp-'));
+    if (!targetIds.length) return;
 
     const { data, error } = await supabase
       .from('message_reactions')
-      .select('message_id,user_id,emoji')
+      .select('message_id,user_id,emoji,created_at')
       .in('message_id', targetIds as any);
 
     if (error) {
@@ -429,19 +472,19 @@ export const ChatBox: React.FC<ChatBoxProps> = ({
     }
 
     const mapped = mapReactions((data ?? []) as MessageReactionRow[]);
-    if (!messageIds) {
-      setMessageReactions(mapped);
-      return;
-    }
-
     setMessageReactions(prev => {
       const next = { ...prev };
+      let changed = false;
       for (const id of targetIds) {
         const key = toMessageKey(id);
+        const prevSig = reactionListSignature(prev[key]);
+        const nextSig = reactionListSignature(mapped[key]);
+        if (prevSig === nextSig) continue;
+        changed = true;
         if (mapped[key]) next[key] = mapped[key];
         else delete next[key];
       }
-      return next;
+      return changed ? next : prev;
     });
   };
 
@@ -460,28 +503,25 @@ export const ChatBox: React.FC<ChatBoxProps> = ({
 
     const messageKey = toMessageKey(messageId);
     const current = messageReactions[messageKey] ?? [];
-    const existing = current.find(r => normalizeReactionEmoji(r.emoji) === normalizedEmoji && r.reactedByMe);
+    const myReaction = current.find(r => r.reactedByMe);
+    const isSameReaction = Boolean(myReaction && normalizeReactionEmoji(myReaction.emoji) === normalizedEmoji);
 
-    if (existing) {
-      const { error } = await supabase
+    const { error: clearError } = await supabase
+      .from('message_reactions')
+      .delete()
+      .eq('message_id', messageId as any)
+      .eq('user_id', currentUser.id);
+    if (clearError) {
+      console.warn('⚠️ [Reaction] failed to clear previous reaction:', clearError.message);
+      return;
+    }
+
+    if (!isSameReaction) {
+      const { error: insertError } = await supabase
         .from('message_reactions')
-        .delete()
-        .eq('message_id', messageId as any)
-        .eq('user_id', currentUser.id)
-        .in('emoji', [normalizedEmoji, '❤️', '❤', '♥', '🩷']);
-      if (error) {
-        console.warn('⚠️ [Reaction] failed to remove reaction:', error.message);
-        return;
-      }
-    } else {
-      const { error } = await supabase
-        .from('message_reactions')
-        .upsert(
-          [{ message_id: messageId as any, user_id: currentUser.id, emoji: normalizedEmoji }],
-          { onConflict: 'message_id,user_id,emoji', ignoreDuplicates: true }
-        );
-      if (error) {
-        console.warn('⚠️ [Reaction] failed to add reaction:', error.message);
+        .insert([{ message_id: messageId as any, user_id: currentUser.id, emoji: normalizedEmoji }]);
+      if (insertError) {
+        console.warn('⚠️ [Reaction] failed to add reaction:', insertError.message);
         return;
       }
     }
@@ -546,10 +586,6 @@ export const ChatBox: React.FC<ChatBoxProps> = ({
 
   useEffect(() => {
     const refreshDailyLoveStats = async () => {
-      const STREAK_LOOKBACK_DAYS = 45;
-      const STREAK_FETCH_LIMIT = 400;
-      const STREAK_REFRESH_COOLDOWN_MS = 5 * 60 * 1000;
-
       const now = new Date();
       const startOfToday = new Date(now);
       startOfToday.setHours(0, 0, 0, 0);
@@ -568,57 +604,24 @@ export const ChatBox: React.FC<ChatBoxProps> = ({
       const todayCount = count ?? 0;
       setDailyHeartEnergy(Math.min(100, todayCount));
 
-      const conversationKey = `${currentUser.id}:${receiver.id}`;
-      const shouldRefreshStreakHistory =
-        lastStreakConversationRef.current !== conversationKey ||
-        Date.now() - lastStreakRefreshAtRef.current > STREAK_REFRESH_COOLDOWN_MS;
+      const [low, high] = currentUser.id < receiver.id
+        ? [currentUser.id, receiver.id]
+        : [receiver.id, currentUser.id];
 
-      if (!shouldRefreshStreakHistory) {
-        return;
-      }
+      const { data: streakRow } = await supabase
+        .from('love_streaks')
+        .select('user_low,user_high,current_streak,today_day,today_has_low,today_has_high')
+        .eq('user_low', low)
+        .eq('user_high', high)
+        .maybeSingle();
 
-      const dayWindowStart = new Date(startOfToday);
-      dayWindowStart.setDate(dayWindowStart.getDate() - STREAK_LOOKBACK_DAYS);
+      const row = streakRow as LoveStreakRow | null;
+      const todayIso = startOfToday.toISOString().slice(0, 10);
+      const isTodayRow = row?.today_day === todayIso;
+      const hasTodayMutual = Boolean(isTodayRow && row?.today_has_low && row?.today_has_high);
 
-      const { data: streakRows } = await supabase
-        .from('messages')
-        .select('sender_id, created_at')
-        .or(pairFilter)
-        .gte('created_at', dayWindowStart.toISOString())
-        .order('created_at', { ascending: false })
-        .limit(STREAK_FETCH_LIMIT);
-
-      const toDayKey = (date: Date) => {
-        const y = date.getFullYear();
-        const m = String(date.getMonth() + 1).padStart(2, '0');
-        const d = String(date.getDate()).padStart(2, '0');
-        return `${y}-${m}-${d}`;
-      };
-
-      const activeDays = new Map<string, { me: boolean; partner: boolean }>();
-      for (const row of streakRows ?? []) {
-        const key = toDayKey(new Date(row.created_at));
-        const state = activeDays.get(key) ?? { me: false, partner: false };
-        if (row.sender_id === currentUser.id) state.me = true;
-        if (row.sender_id === receiver.id) state.partner = true;
-        activeDays.set(key, state);
-      }
-
-      let streak = 0;
-      const cursor = new Date(startOfToday);
-      const todayState = activeDays.get(toDayKey(startOfToday));
-      setHasMutualToday(Boolean(todayState?.me && todayState?.partner));
-      while (true) {
-        const dayState = activeDays.get(toDayKey(cursor));
-        if (!dayState?.me || !dayState?.partner) break;
-        streak += 1;
-        cursor.setDate(cursor.getDate() - 1);
-        if (streak > 365) break;
-      }
-
-      setDailyFireStreak(streak);
-      lastStreakConversationRef.current = conversationKey;
-      lastStreakRefreshAtRef.current = Date.now();
+      setHasMutualToday(hasTodayMutual);
+      setDailyFireStreak(row?.current_streak ?? 0);
     };
 
     if (statsRefreshTimerRef.current) {
@@ -1088,8 +1091,16 @@ export const ChatBox: React.FC<ChatBoxProps> = ({
       pushTypingStatus(false);
       broadcastTypingStatus(false);
       const effectValue = sizeOverride ? `heart:${sizeOverride}` : 'none';
-      await sendMessage(text, undefined, effectValue);
+      const replySnippet = replyTarget
+        ? (replyTarget.image_url ? '[Ảnh/GIF]' : getReplySnippetFromMessage(replyTarget))
+        : '';
+      const payloadText = replyTarget && text.trim()
+        ? `[[reply:${encodeURIComponent(replySnippet)}]]\n${text}`
+        : text;
+
+      await sendMessage(payloadText, undefined, effectValue);
       setText('');
+      setReplyTarget(null);
       setShowEmoji(false);
       setShowSendActions(false);
     }
@@ -1105,8 +1116,16 @@ export const ChatBox: React.FC<ChatBoxProps> = ({
       ? 'none'
       : `textsize:${normalizedScale.toFixed(2)}`;
 
-    await sendMessage(text, undefined, effectValue);
+    const replySnippet = replyTarget
+      ? (replyTarget.image_url ? '[Ảnh/GIF]' : getReplySnippetFromMessage(replyTarget))
+      : '';
+    const payloadText = replyTarget
+      ? `[[reply:${encodeURIComponent(replySnippet)}]]\n${text}`
+      : text;
+
+    await sendMessage(payloadText, undefined, effectValue);
     setText('');
+    setReplyTarget(null);
     setShowEmoji(false);
     setShowSendActions(false);
   };
@@ -1197,6 +1216,46 @@ export const ChatBox: React.FC<ChatBoxProps> = ({
     const raw = parseFloat((effect || '').split(':')[1] || '1');
     if (!Number.isFinite(raw)) return 1;
     return Math.max(0.75, Math.min(2.2, raw));
+  };
+
+  const parseReplyContent = (content: string) => {
+    const normalizeReplyText = (value: string) => value.replace(/^(?:\s*↪\s*|\s*trả lời:\s*)+/i, '').trim();
+
+    const markerMatch = content.match(/^\[\[reply:(.*?)\]\]\n([\s\S]*)$/);
+    if (markerMatch) {
+      const encodedSnippet = markerMatch[1] || '';
+      let decodedSnippet = '';
+      try {
+        decodedSnippet = decodeURIComponent(encodedSnippet);
+      } catch {
+        decodedSnippet = encodedSnippet;
+      }
+
+      return {
+        replySnippet: normalizeReplyText(decodedSnippet),
+        body: markerMatch[2] || ''
+      };
+    }
+
+    if (!content.startsWith('↪ ')) {
+      return { replySnippet: null as string | null, body: content };
+    }
+
+    const newlineIndex = content.indexOf('\n');
+    if (newlineIndex === -1) {
+      return { replySnippet: normalizeReplyText(content.slice(2)), body: '' };
+    }
+
+    return {
+      replySnippet: normalizeReplyText(content.slice(2, newlineIndex)),
+      body: content.slice(newlineIndex + 1)
+    };
+  };
+
+  const getReplySnippetFromMessage = (message: Message) => {
+    const parsed = parseReplyContent(message.content || '');
+    const base = (parsed.body || parsed.replySnippet || '').trim();
+    return base.replace(/^(?:\s*↪\s*|\s*trả lời:\s*)+/i, '').slice(0, 80);
   };
 
   const seasonalBubbleTheme: Record<string, { me: string; partner: string; focusMe: string; focusPartner: string }> = {
@@ -1339,15 +1398,6 @@ export const ChatBox: React.FC<ChatBoxProps> = ({
   const visibleNormalMessages = normalMessages.slice(renderStartIndex, Math.min(renderWindowEnd, normalMessages.length));
 
   useEffect(() => {
-    if (!isReactionFeatureEnabled) return;
-    const visibleIds = visibleNormalMessages
-      .map(m => m.id)
-      .filter(id => !String(id).startsWith('temp-'));
-    if (!visibleIds.length) return;
-    refreshMessageReactions(visibleIds);
-  }, [visibleNormalMessages, isReactionFeatureEnabled]);
-
-  useEffect(() => {
     if (hasInitialBottomSyncRef.current) return;
     if (!scrollRef.current) return;
     if (normalMessages.length === 0) return;
@@ -1366,14 +1416,69 @@ export const ChatBox: React.FC<ChatBoxProps> = ({
     });
   }, [normalMessages.length, renderWindowEnd, visibleNormalMessages.length]);
 
+  useEffect(() => {
+    const from = animatedHeartEnergyRef.current;
+    const to = dailyHeartEnergy;
+    if (from === to) return;
+
+    const startedAt = performance.now();
+    const duration = 520;
+    let rafId = 0;
+
+    const tick = (time: number) => {
+      const progress = Math.min(1, (time - startedAt) / duration);
+      const eased = 1 - Math.pow(1 - progress, 3);
+      const next = from + (to - from) * eased;
+      setAnimatedHeartEnergy(next);
+      if (progress < 1) {
+        rafId = requestAnimationFrame(tick);
+      }
+    };
+
+    rafId = requestAnimationFrame(tick);
+    return () => cancelAnimationFrame(rafId);
+  }, [dailyHeartEnergy]);
+
+  useEffect(() => {
+    animatedHeartEnergyRef.current = animatedHeartEnergy;
+  }, [animatedHeartEnergy]);
+
+  useEffect(() => {
+    hasPlayedHeartRainAt100Ref.current = false;
+    prevHeartEnergyRef.current = 0;
+  }, [currentUser.id, receiver.id]);
+
+  useEffect(() => {
+    const prev = prevHeartEnergyRef.current;
+    if (!hasPlayedHeartRainAt100Ref.current && prev < 100 && dailyHeartEnergy >= 100) {
+      const particles: HeartRainParticle[] = Array.from({ length: 30 }).map((_, idx) => ({
+        id: Date.now() + idx,
+        left: 4 + Math.random() * 92,
+        size: 14 + Math.random() * 16,
+        duration: 2200 + Math.random() * 1800,
+        delay: Math.random() * 700,
+        drift: -28 + Math.random() * 56,
+        opacity: 0.55 + Math.random() * 0.45
+      }));
+      setHeartRainParticles(particles);
+
+      if (heartRainCleanupRef.current) window.clearTimeout(heartRainCleanupRef.current);
+      heartRainCleanupRef.current = window.setTimeout(() => {
+        setHeartRainParticles([]);
+      }, 4600);
+      hasPlayedHeartRainAt100Ref.current = true;
+    }
+
+    prevHeartEnergyRef.current = dailyHeartEnergy;
+  }, [dailyHeartEnergy]);
+
   const toHeartVisualFill = (energy: number) => {
     const clamped = Math.max(0, Math.min(100, energy));
-    if (clamped >= 100) return 100;
-    // Non-linear mapping so high values (e.g. 88%) still look clearly below full.
-    return Math.max(0, Math.min(92, clamped * 0.72 + Math.pow(clamped / 100, 2) * 8));
+    const perceptualBoost = Math.sin((clamped / 100) * Math.PI) * 4;
+    return Math.max(0, Math.min(100, clamped + perceptualBoost));
   };
-  const heartMainFill = toHeartVisualFill(dailyHeartEnergy);
-  const heartSmallFill = toHeartVisualFill(dailyHeartEnergy);
+  const heartMainFill = toHeartVisualFill(animatedHeartEnergy);
+  const heartSmallFill = toHeartVisualFill(animatedHeartEnergy * 0.98);
   const reviewStages = [10, 20, 30, 50, 100] as const;
   const isPreviewFire = previewFireStreak !== null;
   const effectiveFireStreak = previewFireStreak ?? dailyFireStreak;
@@ -2036,6 +2141,50 @@ export const ChatBox: React.FC<ChatBoxProps> = ({
         
         <SparklingDust />
 
+        {heartRainParticles.length > 0 && (
+          <div className="absolute inset-0 z-20 pointer-events-none overflow-hidden">
+            {heartRainParticles.map((p) => (
+              <span
+                key={p.id}
+                className="absolute -top-10 select-none"
+                style={{
+                  left: `${p.left}%`,
+                  width: `${p.size}px`,
+                  height: `${p.size * 0.92}px`,
+                  marginLeft: `${Math.round(p.drift * 0.35)}px`,
+                  opacity: p.opacity,
+                  animation: `heart-rain-fall ${p.duration}ms linear ${p.delay}ms forwards, heart-rain-drift ${Math.max(900, p.duration * 0.55)}ms ease-in-out ${p.delay}ms infinite alternate`
+                }}
+              >
+                <svg
+                  viewBox="0 0 64 58"
+                  className="w-full h-full drop-shadow-[0_3px_8px_rgba(244,63,94,0.45)]"
+                  aria-hidden="true"
+                >
+                  <defs>
+                    <linearGradient id={`heart-rain-grad-${p.id}`} x1="0%" y1="0%" x2="100%" y2="100%">
+                      <stop offset="0%" stopColor="#ffd5e6" />
+                      <stop offset="45%" stopColor="#ff7cab" />
+                      <stop offset="100%" stopColor="#e11d48" />
+                    </linearGradient>
+                  </defs>
+                  <path
+                    d="M32 57S2 37.4 2 18.3C2 8.5 9.8 1 19.3 1c6 0 9.9 3.1 12.7 7.6C34.8 4.1 38.7 1 44.7 1 54.2 1 62 8.5 62 18.3 62 37.4 32 57 32 57z"
+                    fill={`url(#heart-rain-grad-${p.id})`}
+                    stroke="#fb7185"
+                    strokeWidth="1.2"
+                    strokeLinejoin="round"
+                  />
+                  <path
+                    d="M22 13c-2.8 0-5.1 2.2-5.1 5 0 1 .3 2 .9 2.8.5.7 1.4 1.1 2.2 1.1.7 0 1.4-.3 1.8-.9l2.9-4c.5-.7.4-1.7-.2-2.4A3.3 3.3 0 0 0 22 13z"
+                    fill="rgba(255,255,255,0.45)"
+                  />
+                </svg>
+              </span>
+            ))}
+          </div>
+        )}
+
         {showScrollToBottom && (
           <button 
             onClick={() => {
@@ -2076,7 +2225,7 @@ export const ChatBox: React.FC<ChatBoxProps> = ({
           ref={scrollRef} 
           onScroll={handleScroll} 
           className={cn(
-              "absolute inset-0 overflow-y-auto p-3 sm:p-5 md:p-8 space-y-4 md:space-y-6 custom-scrollbar z-10 scroll-smooth transition-all duration-1000",
+              "absolute inset-0 overflow-y-auto p-3 sm:p-5 md:p-8 custom-scrollbar z-10 scroll-smooth transition-all duration-1000",
             isFocusedMode ? "immersion-clear-ui" : ""
           )}
         >
@@ -2091,6 +2240,8 @@ export const ChatBox: React.FC<ChatBoxProps> = ({
             const isSending = msg.id.toString().startsWith('temp-');
             const isLastRead = msg.id === delayedLastReadId;
             const isUnreadDivider = msg.id === firstUnreadId;
+            const prevMsg = index > 0 ? visibleNormalMessages[index - 1] : undefined;
+            const nextMsg = index < visibleNormalMessages.length - 1 ? visibleNormalMessages[index + 1] : undefined;
             const hasExplosion = activeExplosions[msg.id];
             const messageKey = toMessageKey(msg.id);
             const reactionItems = messageReactions[messageKey] ?? messageReactions[String(msg.id)] ?? [];
@@ -2099,13 +2250,47 @@ export const ChatBox: React.FC<ChatBoxProps> = ({
             const textScale = getTextScaleFromEffect(msg.effect);
             const textFontPx = Math.max(8, Math.min(56, Math.round(15 * textScale)));
             const textLineHeight = textScale >= 2 ? 1.12 : textScale <= 0.7 ? 1.22 : 1.34;
+            const parsedReply = parseReplyContent(msg.content || '');
+            const messageBody = parsedReply.body;
             
             // Check if this is an "Old" message being loaded historically
             // We give historical messages instant presence (no fade-in) for stability
             const isHistorical = index < 25 && isLoadingMore;
 
+            const msgTime = new Date(msg.created_at).getTime();
+            const prevTime = prevMsg ? new Date(prevMsg.created_at).getTime() : 0;
+            const nextTime = nextMsg ? new Date(nextMsg.created_at).getTime() : 0;
+            const isSameDayAsPrev = prevMsg ? new Date(prevMsg.created_at).toDateString() === new Date(msg.created_at).toDateString() : false;
+            const isSameSenderNearNext = Boolean(
+              nextMsg &&
+              nextMsg.sender_id === msg.sender_id &&
+              new Date(nextMsg.created_at).toDateString() === new Date(msg.created_at).toDateString() &&
+              Math.abs(nextTime - msgTime) <= 5 * 60 * 1000
+            );
+            const isNearPrev = Boolean(
+              prevMsg &&
+              prevMsg.sender_id === msg.sender_id &&
+              Math.abs(msgTime - prevTime) <= 5 * 60 * 1000
+            );
+            const showDateDivider = !isSameDayAsPrev;
+            const showTimestamp = !isSameSenderNearNext;
+            const attachReactionToTail = !String(msg.id).startsWith('temp-');
+            const myReaction = reactionItems.find(item => item.reactedByMe);
+            const reactionPreviewEmoji = myReaction?.emoji || reactionItems[0]?.emoji;
+            const reactionTotal = reactionItems.reduce((sum, item) => sum + item.count, 0);
+
             return (
               <React.Fragment key={msg.id}>
+                {showDateDivider && (
+                  <div className="flex items-center justify-center py-5 animate-in fade-in duration-500">
+                    <div className="h-px flex-1 bg-gradient-to-r from-transparent via-white/25 to-white/10" />
+                    <span className="mx-3 px-3 py-1 rounded-full text-[10px] font-bold tracking-wide uppercase bg-black/25 border border-white/20 text-white/80">
+                      {new Date(msg.created_at).toLocaleDateString('vi-VN', { weekday: 'short', day: '2-digit', month: '2-digit', year: 'numeric' })}
+                    </span>
+                    <div className="h-px flex-1 bg-gradient-to-l from-transparent via-white/25 to-white/10" />
+                  </div>
+                )}
+
                 {isUnreadDivider && (
                   <div className="flex items-center justify-center py-10 animate-in fade-in slide-in-from-top-4 duration-1000">
                     <div className="h-px flex-1 bg-gradient-to-r from-transparent via-pink-200 to-pink-200"></div>
@@ -2117,7 +2302,8 @@ export const ChatBox: React.FC<ChatBoxProps> = ({
                 )}
                 
                 <div className={cn(
-                  "flex w-full flex-col relative", 
+                  "flex w-full flex-col relative",
+                  index === 0 ? "mt-0" : isNearPrev ? "mt-1" : "mt-3.5",
                   isMe ? "items-end" : "items-start",
                   !isHistorical && "animate-in fade-in slide-in-from-bottom-2 duration-500"
                 )}>
@@ -2146,20 +2332,102 @@ export const ChatBox: React.FC<ChatBoxProps> = ({
                             onDoubleClick={handleDoubleClick}
                           >
                             <SmartImage src={msg.image_url} />
+
+                            {attachReactionToTail && (
+                              <div className={cn("absolute -bottom-1 z-20", isMe ? "-left-2" : "-right-2") }>
+                                <div className="relative">
+                                  <button
+                                    type="button"
+                                    onClick={() => setActiveReactionPickerFor(prev => (prev !== null && toMessageKey(prev) === messageKey ? null : msg.id))}
+                                    className={cn(
+                                      "w-6 h-6 rounded-full border flex items-center justify-center transition-all shadow-lg backdrop-blur-sm",
+                                      isReactionPickerOpen
+                                        ? "bg-rose-500/85 border-rose-200 text-white"
+                                        : "bg-slate-500/30 border-white/30 text-white/75 hover:bg-slate-500/45"
+                                    )}
+                                    title="Bày tỏ cảm xúc"
+                                  >
+                                    {reactionPreviewEmoji ? (
+                                      <span className="inline-flex items-center gap-0.5 text-[10px] font-bold leading-none">
+                                        <ReactionIcon emoji={reactionPreviewEmoji} className="w-3.5 h-3.5" />
+                                        {reactionTotal > 1 && <span>{reactionTotal}</span>}
+                                      </span>
+                                    ) : (
+                                      <Smile className="w-3.5 h-3.5" />
+                                    )}
+                                  </button>
+
+                                  {isReactionPickerOpen && (
+                                    <div className={cn(
+                                      "absolute z-[1450] bottom-full mb-2 px-3 py-2 sm:px-2 sm:py-1 rounded-full border backdrop-blur-xl flex items-center gap-2 sm:gap-1",
+                                      isMe ? "right-0" : "left-0",
+                                      "bg-black/60 border-white/20"
+                                    )}>
+                                      {quickReactionEmojis.map((emoji) => (
+                                        <button
+                                          key={`${msg.id}-${emoji}`}
+                                          type="button"
+                                          onClick={() => toggleMessageReaction(msg.id, emoji)}
+                                          className={cn(
+                                            "w-9 h-9 sm:w-6 sm:h-6 rounded-full flex items-center justify-center transition-all",
+                                            normalizeReactionEmoji(emoji) === normalizeReactionEmoji(myReaction?.emoji || '')
+                                              ? "bg-white/30 ring-2 ring-white/80 scale-125 sm:scale-110"
+                                              : "hover:scale-125 active:scale-110"
+                                          )}
+                                        >
+                                          <ReactionIcon emoji={emoji} className="w-6 h-6 sm:w-5 sm:h-5" />
+                                        </button>
+                                      ))}
+                                      <span className="mx-1 sm:mx-0.5 h-5 sm:h-4 w-px bg-white/25" />
+                                      <button
+                                        type="button"
+                                        onClick={() => {
+                                          setReplyTarget(msg);
+                                          setActiveReactionPickerFor(null);
+                                        }}
+                                        className="w-9 h-9 sm:w-6 sm:h-6 rounded-full flex items-center justify-center transition-all text-cyan-200 hover:text-cyan-100 hover:scale-110"
+                                        title="Trả lời tin nhắn"
+                                      >
+                                        <Reply className="w-5 h-5 sm:w-4 sm:h-4" />
+                                      </button>
+                                      <button
+                                        type="button"
+                                        onClick={async () => {
+                                          await requestDeleteMessage(msg.id);
+                                          setActiveReactionPickerFor(null);
+                                        }}
+                                        disabled={pendingDeleteRequestMessageIds.has(toMessageKey(msg.id))}
+                                        className={cn(
+                                          "w-9 h-9 sm:w-6 sm:h-6 rounded-full flex items-center justify-center transition-all",
+                                          pendingDeleteRequestMessageIds.has(toMessageKey(msg.id))
+                                            ? "text-amber-200/70 cursor-not-allowed"
+                                            : "text-rose-200 hover:text-rose-100 hover:scale-110"
+                                        )}
+                                        title={pendingDeleteRequestMessageIds.has(toMessageKey(msg.id)) ? "Đang chờ chấp nhận xóa" : "Yêu cầu xóa tin nhắn"}
+                                      >
+                                        <Trash2 className="w-5 h-5 sm:w-4 sm:h-4" />
+                                      </button>
+                                    </div>
+                                  )}
+                                </div>
+                              </div>
+                            )}
                           </div>
                           
                           {/* Subtle Image Timestamp */}
-                          <div className={cn(
-                            "mt-1.5 px-3 text-[9px] font-bold uppercase tracking-widest transition-all w-full flex items-center gap-1.5",
-                            isMe ? "justify-end text-rose-400/50" : "justify-start text-blue-400/70 dark:text-pink-400/60"
-                          )}>
-                            {isMe && (
-                              isSending
-                                ? <Loader2 className="w-3 h-3 animate-spin" />
-                                : <Check className="w-3 h-3 text-green-500" />
-                            )}
-                            {new Date(msg.created_at).toLocaleTimeString('vi-VN', { hour: '2-digit', minute: '2-digit', hour12: false })}
-                          </div>
+                          {showTimestamp && (
+                            <div className={cn(
+                              "mt-1.5 px-3 text-[9px] font-bold uppercase tracking-widest transition-all w-full flex items-center gap-1.5",
+                              isMe ? "justify-end text-rose-400/50" : "justify-start text-blue-400/70 dark:text-pink-400/60"
+                            )}>
+                              {isMe && (
+                                isSending
+                                  ? <Loader2 className="w-3 h-3 animate-spin" />
+                                  : <Check className="w-3 h-3 text-green-500" />
+                              )}
+                              {new Date(msg.created_at).toLocaleTimeString('vi-VN', { hour: '2-digit', minute: '2-digit', hour12: false })}
+                            </div>
+                          )}
                         </div>
                       </div>
                     ) : (
@@ -2182,8 +2450,20 @@ export const ChatBox: React.FC<ChatBoxProps> = ({
                           )}
                           style={isHeartEffect(msg.effect) ? undefined : { fontSize: `${textFontPx}px`, lineHeight: textLineHeight }}
                         >
+                          {parsedReply.replySnippet && (
+                            <div className={cn(
+                              "mb-2 rounded-xl border px-3 py-1.5 text-[11px] leading-snug",
+                              isMe
+                                ? "bg-white/20 border-white/35 text-white/95"
+                                : "bg-black/10 border-black/10 dark:bg-white/10 dark:border-white/15 text-slate-700 dark:text-slate-200"
+                            )}>
+                              <span className="font-bold opacity-90">Trả lời:</span>{' '}
+                              <span className="opacity-90">{parsedReply.replySnippet}</span>
+                            </div>
+                          )}
+
                           {/* UNIVERSAL LINK DETECTION LOGIC */}
-                          {msg.content.split(/((?:https?:\/\/|www\.)[^\s]+)/g).map((part, i) => {
+                          {messageBody.split(/((?:https?:\/\/|www\.)[^\s]+)/g).map((part, i) => {
                             const isUrl = /^(https?:\/\/|www\.)[^\s]+$/.test(part);
                             if (isUrl) {
                               const href = part.startsWith('http') ? part : `https://${part}`;
@@ -2211,101 +2491,105 @@ export const ChatBox: React.FC<ChatBoxProps> = ({
                               />
                             );
                           })}
-                        </div>
 
-                        {/* Subtle Message Timestamp */}
-                        <div className={cn(
-                          "mt-1.5 px-3 text-[9px] font-bold uppercase tracking-widest transition-all flex items-center gap-1.5",
-                          isMe ? "justify-end text-rose-400/50" : "justify-start text-blue-400/70 dark:text-pink-400/60"
-                        )}>
-                          {isMe && (
-                            isSending
-                              ? <Loader2 className="w-3 h-3 animate-spin" />
-                              : <Check className="w-3 h-3 text-green-500" />
-                          )}
-                          {new Date(msg.created_at).toLocaleTimeString('vi-VN', { hour: '2-digit', minute: '2-digit', hour12: false })}
-                        </div>
-                      </>
-                    )}
-
-                    {!String(msg.id).startsWith('temp-') && (
-                      <div className={cn("mt-1.5 flex items-center gap-1.5 flex-wrap", isMe ? "justify-end" : "justify-start")}>
-                        {reactionItems.map((item) => (
-                          <button
-                            key={`${msg.id}-${item.emoji}`}
-                            type="button"
-                            onClick={() => toggleMessageReaction(msg.id, item.emoji)}
-                            className={cn(
-                              "px-2 py-0.5 rounded-full text-xs border transition-all",
-                              item.reactedByMe
-                                ? "bg-rose-500/20 border-rose-400/50 text-rose-300"
-                                : "bg-white/10 border-white/20 text-slate-200"
-                            )}
-                            title="Bỏ cảm xúc"
-                          >
-                            <span className="inline-flex items-center gap-1">
-                              <ReactionIcon emoji={item.emoji} className="w-3.5 h-3.5" />
-                              <span>{item.count}</span>
-                            </span>
-                          </button>
-                        ))}
-
-                        <div className="relative">
-                          <button
-                            type="button"
-                            onClick={() => setActiveReactionPickerFor(prev => (prev !== null && toMessageKey(prev) === messageKey ? null : msg.id))}
-                            className={cn(
-                              "w-6 h-6 rounded-full border flex items-center justify-center transition-all",
-                              isReactionPickerOpen
-                                ? "bg-rose-500/35 border-rose-300/60 text-rose-100"
-                                : isMe
-                                  ? "bg-rose-500/20 border-rose-300/40 text-rose-200 hover:bg-rose-500/30"
-                                  : "bg-cyan-500/20 border-cyan-300/40 text-cyan-100 hover:bg-cyan-500/30"
-                            )}
-                            title="Bày tỏ cảm xúc"
-                          >
-                            <HeartIcon className="w-3.5 h-3.5 fill-current" />
-                          </button>
-
-                          {isReactionPickerOpen && (
-                            <div className={cn(
-                              "absolute z-[1450] bottom-full mb-2 px-2 py-1 rounded-full border backdrop-blur-xl flex items-center gap-1",
-                              isMe ? "right-0" : "left-0",
-                              "bg-black/60 border-white/20"
-                            )}>
-                              {quickReactionEmojis.map((emoji) => (
+                          {attachReactionToTail && (
+                            <div className={cn("absolute -bottom-1 z-20", isMe ? "-left-2" : "-right-2") }>
+                              <div className="relative">
                                 <button
-                                  key={`${msg.id}-${emoji}`}
                                   type="button"
-                                  onClick={() => toggleMessageReaction(msg.id, emoji)}
-                                  className="w-6 h-6 flex items-center justify-center hover:scale-125 transition-transform"
+                                  onClick={() => setActiveReactionPickerFor(prev => (prev !== null && toMessageKey(prev) === messageKey ? null : msg.id))}
+                                  className={cn(
+                                    "w-6 h-6 rounded-full border flex items-center justify-center transition-all shadow-lg backdrop-blur-sm",
+                                    isReactionPickerOpen
+                                      ? "bg-rose-500/85 border-rose-200 text-white"
+                                      : "bg-slate-500/30 border-white/30 text-white/75 hover:bg-slate-500/45"
+                                  )}
+                                  title="Bày tỏ cảm xúc"
                                 >
-                                  <ReactionIcon emoji={emoji} className="w-5 h-5" />
+                                  {reactionPreviewEmoji ? (
+                                    <span className="inline-flex items-center gap-0.5 text-[10px] font-bold leading-none">
+                                      <ReactionIcon emoji={reactionPreviewEmoji} className="w-3.5 h-3.5" />
+                                      {reactionTotal > 1 && <span>{reactionTotal}</span>}
+                                    </span>
+                                  ) : (
+                                    <Smile className="w-3.5 h-3.5" />
+                                  )}
                                 </button>
-                              ))}
-                              <span className="mx-0.5 h-4 w-px bg-white/25" />
-                              <button
-                                type="button"
-                                onClick={async () => {
-                                  await requestDeleteMessage(msg.id);
-                                  setActiveReactionPickerFor(null);
-                                }}
-                                disabled={pendingDeleteRequestMessageIds.has(toMessageKey(msg.id))}
-                                className={cn(
-                                  "w-6 h-6 rounded-full flex items-center justify-center transition-all",
-                                  pendingDeleteRequestMessageIds.has(toMessageKey(msg.id))
-                                    ? "text-amber-200/70 cursor-not-allowed"
-                                    : "text-rose-200 hover:text-rose-100 hover:scale-110"
+
+                                {isReactionPickerOpen && (
+                                  <div className={cn(
+                                    "absolute z-[1450] bottom-full mb-2 px-3 py-2 sm:px-2 sm:py-1 rounded-full border backdrop-blur-xl flex items-center gap-2 sm:gap-1",
+                                    isMe ? "right-0" : "left-0",
+                                    "bg-black/60 border-white/20"
+                                  )}>
+                                    {quickReactionEmojis.map((emoji) => (
+                                      <button
+                                        key={`${msg.id}-${emoji}`}
+                                        type="button"
+                                        onClick={() => toggleMessageReaction(msg.id, emoji)}
+                                        className={cn(
+                                          "w-9 h-9 sm:w-6 sm:h-6 rounded-full flex items-center justify-center transition-all",
+                                          normalizeReactionEmoji(emoji) === normalizeReactionEmoji(myReaction?.emoji || '')
+                                            ? "bg-white/30 ring-2 ring-white/80 scale-125 sm:scale-110"
+                                            : "hover:scale-125 active:scale-110"
+                                        )}
+                                      >
+                                        <ReactionIcon emoji={emoji} className="w-6 h-6 sm:w-5 sm:h-5" />
+                                      </button>
+                                    ))}
+                                    <span className="mx-1 sm:mx-0.5 h-5 sm:h-4 w-px bg-white/25" />
+                                    <button
+                                      type="button"
+                                      onClick={() => {
+                                        setReplyTarget(msg);
+                                        setActiveReactionPickerFor(null);
+                                      }}
+                                      className="w-9 h-9 sm:w-6 sm:h-6 rounded-full flex items-center justify-center transition-all text-cyan-200 hover:text-cyan-100 hover:scale-110"
+                                      title="Trả lời tin nhắn"
+                                    >
+                                      <Reply className="w-5 h-5 sm:w-4 sm:h-4" />
+                                    </button>
+                                    <button
+                                      type="button"
+                                      onClick={async () => {
+                                        await requestDeleteMessage(msg.id);
+                                        setActiveReactionPickerFor(null);
+                                      }}
+                                      disabled={pendingDeleteRequestMessageIds.has(toMessageKey(msg.id))}
+                                      className={cn(
+                                        "w-9 h-9 sm:w-6 sm:h-6 rounded-full flex items-center justify-center transition-all",
+                                        pendingDeleteRequestMessageIds.has(toMessageKey(msg.id))
+                                          ? "text-amber-200/70 cursor-not-allowed"
+                                          : "text-rose-200 hover:text-rose-100 hover:scale-110"
+                                      )}
+                                      title={pendingDeleteRequestMessageIds.has(toMessageKey(msg.id)) ? "Đang chờ chấp nhận xóa" : "Yêu cầu xóa tin nhắn"}
+                                    >
+                                      <Trash2 className="w-5 h-5 sm:w-4 sm:h-4" />
+                                    </button>
+                                  </div>
                                 )}
-                                title={pendingDeleteRequestMessageIds.has(toMessageKey(msg.id)) ? "Đang chờ chấp nhận xóa" : "Yêu cầu xóa tin nhắn"}
-                              >
-                                <Trash2 className="w-4 h-4" />
-                              </button>
+                              </div>
                             </div>
                           )}
                         </div>
-                      </div>
+
+                        {/* Subtle Message Timestamp */}
+                        {showTimestamp && (
+                          <div className={cn(
+                            "mt-1.5 px-3 text-[9px] font-bold uppercase tracking-widest transition-all flex items-center gap-1.5",
+                            isMe ? "justify-end text-rose-400/50" : "justify-start text-blue-400/70 dark:text-pink-400/60"
+                          )}>
+                            {isMe && (
+                              isSending
+                                ? <Loader2 className="w-3 h-3 animate-spin" />
+                                : <Check className="w-3 h-3 text-green-500" />
+                            )}
+                            {new Date(msg.created_at).toLocaleTimeString('vi-VN', { hour: '2-digit', minute: '2-digit', hour12: false })}
+                          </div>
+                        )}
+                      </>
                     )}
+
                       {pendingDeleteRequestMessageIds.has(toMessageKey(msg.id)) && (
                         <p className={cn("mt-1 text-[10px] font-bold", isMe ? "text-amber-300 text-right" : "text-amber-300")}>Đang chờ đối phương chấp nhận xóa</p>
                       )}
@@ -2403,6 +2687,28 @@ export const ChatBox: React.FC<ChatBoxProps> = ({
         style={{ paddingBottom: 'calc(env(safe-area-inset-bottom, 0px) + 0.5rem)' }}
       >
         <div className={cn("max-w-4xl mx-auto flex flex-col space-y-4", isFocusedMode ? "immersion-clear-ui" : "")}>
+          {replyTarget && (
+            <div className={cn(
+              "flex items-center justify-between gap-3 rounded-2xl border px-3 py-2",
+              isDarkMode ? "bg-white/5 border-white/15" : "bg-white/80 border-pink-100"
+            )}>
+              <div className="min-w-0">
+                <p className={cn("text-[10px] font-black uppercase tracking-wide", isDarkMode ? "text-cyan-200" : "text-cyan-600")}>Đang trả lời</p>
+                <p className={cn("text-xs truncate", isDarkMode ? "text-white/85" : "text-slate-700")}>
+                  {replyTarget.image_url ? '[Ảnh/GIF]' : (getReplySnippetFromMessage(replyTarget) || '(Tin nhắn trống)')}
+                </p>
+              </div>
+              <button
+                type="button"
+                onClick={() => setReplyTarget(null)}
+                className={cn("w-7 h-7 rounded-full flex items-center justify-center", isDarkMode ? "bg-white/10 text-white/80" : "bg-slate-100 text-slate-500")}
+                title="Hủy trả lời"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+          )}
+
           {/* Sticker Ribbon */}
           {showStickerRibbon && stickers.length > 0 && (
             <div ref={stickerRibbonRef} className={cn("flex items-center space-x-3 group/ribbon animate-in slide-in-from-bottom-2 duration-300", isFocusedMode ? "immersion-clear-ui" : "") }>
@@ -2611,6 +2917,18 @@ export const ChatBox: React.FC<ChatBoxProps> = ({
           />
         </div>
       )}
+
+      <style>{`\
+        @keyframes heart-rain-fall {\
+          0% { transform: translate3d(0, -6vh, 0) scale(0.9); opacity: 0; }\
+          15% { opacity: 1; }\
+          100% { transform: translate3d(0, 115vh, 0) scale(1.15); opacity: 0; }\
+        }\
+        @keyframes heart-rain-drift {\
+          0% { margin-left: -12px; }\
+          100% { margin-left: 12px; }\
+        }\
+      `}</style>
 
       <input
         ref={fileInputRef}

@@ -3,6 +3,7 @@ import { supabase } from '../lib/supabase';
 import type { Message } from '../types';
 
 export function useChat(currentUserId: string, receiverId?: string, isGlobalPresence: boolean = false) {
+  const MESSAGE_PAGE_SIZE = 50;
   const [messages, setMessages] = useState<Message[]>([]);
   const messagesRef = useRef<Message[]>([]);
   const [hasMore, setHasMore] = useState(true);
@@ -236,11 +237,11 @@ export function useChat(currentUserId: string, receiverId?: string, isGlobalPres
       .select('*')
       .or(`and(sender_id.eq.${currentUserId},receiver_id.eq.${receiverId}),and(sender_id.eq.${receiverId},receiver_id.eq.${currentUserId})`)
       .order('created_at', { ascending: false })
-      .limit(25);
+      .limit(MESSAGE_PAGE_SIZE);
 
     if (data) {
       setMessages(dedupeMessagesById(data.reverse()));
-      setHasMore(data.length === 25);
+      setHasMore(data.length === MESSAGE_PAGE_SIZE);
     }
   };
 
@@ -253,11 +254,11 @@ export function useChat(currentUserId: string, receiverId?: string, isGlobalPres
       .or(`and(sender_id.eq.${currentUserId},receiver_id.eq.${receiverId}),and(sender_id.eq.${receiverId},receiver_id.eq.${currentUserId})`)
       .lt('created_at', oldest.created_at)
       .order('created_at', { ascending: false })
-      .limit(25);
+      .limit(MESSAGE_PAGE_SIZE);
 
     if (data && data.length > 0) {
       setMessages(prev => dedupeMessagesById([...data.reverse(), ...prev]));
-      setHasMore(data.length === 25);
+      setHasMore(data.length === MESSAGE_PAGE_SIZE);
     } else {
       setHasMore(false);
     }

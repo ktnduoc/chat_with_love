@@ -486,9 +486,6 @@ const App: React.FC = () => {
                     <h4 className={cn("font-black transition-all duration-700 text-3xl truncate text-[var(--text-main)]", isPrivateMode && "blur-[12px]")}>
                       {isPrivateMode ? "Secret Love" : partner.username}
                     </h4>
-                    <p className="text-[10px] font-black text-rose-500 dark:text-rose-500 mt-4 uppercase tracking-[0.3em] opacity-60">
-                      Chạm hai lần để hôn 💋
-                    </p>
                   </div>
                 </div>
               ) : (
