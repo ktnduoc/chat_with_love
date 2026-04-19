@@ -31,6 +31,15 @@ CREATE POLICY "Owners can delete their own stickers." ON public.stickers
   FOR DELETE TO authenticated USING (auth.uid() = user_id);
 
 -- -------------------------------------------------------------
+-- 🧱 MESSAGE SCHEMA HARDENING: ĐẢM BẢO LƯU ĐƯỢC EFFECT (textsize)
+-- -------------------------------------------------------------
+ALTER TABLE public.messages
+  ADD COLUMN IF NOT EXISTS effect TEXT NOT NULL DEFAULT 'none';
+
+ALTER TABLE public.messages
+  ADD COLUMN IF NOT EXISTS is_opened BOOLEAN NOT NULL DEFAULT FALSE;
+
+-- -------------------------------------------------------------
 -- 💬 MESSAGE REACTIONS: BÀY TỎ CẢM XÚC CHO TỪNG TIN NHẮN
 -- -------------------------------------------------------------
 CREATE TABLE IF NOT EXISTS public.message_reactions (

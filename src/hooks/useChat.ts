@@ -56,12 +56,28 @@ export function useChat(currentUserId: string, receiverId?: string, isGlobalPres
                const parts = (newMessage.effect || '').split(':');
                const maybeTempId = parts[parts.length - 1];
                const originalTempId = maybeTempId?.startsWith('temp-') ? maybeTempId : undefined;
+
+               // Fallback: if server row lost textsize effect, inherit from closest temp message.
+               const fallbackTemp = prev.find(m =>
+                 String(m.id).startsWith('temp-') &&
+                 m.sender_id === currentUserId &&
+                 m.receiver_id === receiverId &&
+                 m.content === newMessage.content &&
+                 (m.image_url || null) === (newMessage.image_url || null)
+               );
+
+               const normalizedNewMessage =
+                 (!newMessage.effect || newMessage.effect === 'none') &&
+                 fallbackTemp?.effect?.startsWith('textsize:')
+                   ? { ...newMessage, effect: fallbackTemp.effect }
+                   : newMessage;
                
                const filtered = prev.filter(m => {
                  if (originalTempId && m.id === originalTempId) return false;
+                 if (!originalTempId && fallbackTemp && m.id === fallbackTemp.id) return false;
                  return true;
                });
-               return dedupeMessagesById([...filtered, newMessage]);
+               return dedupeMessagesById([...filtered, normalizedNewMessage]);
             }
             return dedupeMessagesById([...prev, newMessage]);
           });
@@ -78,7 +94,19 @@ export function useChat(currentUserId: string, receiverId?: string, isGlobalPres
         
         if (isRelevant) {
           console.log('📡 [Realtime] Message updated (opened):', updated.id, updated.is_opened);
-          setMessages(prev => prev.map(m => m.id === updated.id ? updated : m));
+          setMessages(prev => prev.map(m => {
+            if (m.id !== updated.id) return m;
+
+            const updatedEffect = typeof updated.effect === 'string' ? updated.effect.trim().toLowerCase() : '';
+            const currentHasTextSize = typeof m.effect === 'string' && m.effect.startsWith('textsize:');
+            const updatedLooksDefault = !updatedEffect || updatedEffect === 'none' || updatedEffect === 'none:none';
+
+            if (currentHasTextSize && updatedLooksDefault) {
+              return { ...updated, effect: m.effect };
+            }
+
+            return updated;
+          }));
         }
       })
       .on('postgres_changes', {
@@ -296,10 +324,30 @@ export function useChat(currentUserId: string, receiverId?: string, isGlobalPres
        setMessages(prev => prev.filter(m => m.id !== tempId));
     } else {
        if (insertedMessage) {
+         const normalizedInserted =
+           (effectToPersist.startsWith('textsize:') && (!insertedMessage.effect || insertedMessage.effect === 'none'))
+             ? { ...insertedMessage, effect: effectToPersist }
+             : insertedMessage;
+
          setMessages(prev => {
            const withoutTemp = prev.filter(m => m.id !== tempId);
-           if (withoutTemp.some(m => m.id === insertedMessage.id)) return withoutTemp;
-           return dedupeMessagesById([...withoutTemp, insertedMessage as Message]);
+           const existingIndex = withoutTemp.findIndex(m => m.id === normalizedInserted.id);
+           if (existingIndex >= 0) {
+             const existing = withoutTemp[existingIndex];
+             const normalizedEffect = typeof normalizedInserted.effect === 'string' ? normalizedInserted.effect.trim().toLowerCase() : '';
+             const shouldUpgradeEffect =
+               effectToPersist.startsWith('textsize:') &&
+               (!normalizedEffect || normalizedEffect === 'none' || normalizedEffect === 'none:none');
+
+             if (shouldUpgradeEffect) {
+               const next = [...withoutTemp];
+               next[existingIndex] = { ...(existing as Message), ...(normalizedInserted as Message), effect: effectToPersist };
+               return dedupeMessagesById(next);
+             }
+
+             return withoutTemp;
+           }
+           return dedupeMessagesById([...withoutTemp, normalizedInserted as Message]);
          });
        }
        console.log('✅ [Chat] Message sent successfully');
@@ -311,12 +359,27 @@ export function useChat(currentUserId: string, receiverId?: string, isGlobalPres
       typeof id === 'string' && /^\d+$/.test(id) ? Number(id) : id;
 
     console.log('💎 [Chat] Retiring secret heart permanently...', normalizedId);
+
+    const { data: existingMessage, error: readError } = await supabase
+      .from('messages')
+      .select('effect')
+      .eq('id', normalizedId)
+      .maybeSingle();
+
+    if (readError) {
+      console.error('❌ [Chat] Failed to read message before open:', readError.message);
+      return false;
+    }
+
+    const shouldResetEffect = typeof existingMessage?.effect === 'string' && existingMessage.effect.startsWith('heart');
+    const updatePayload: { is_opened: boolean; effect?: string } = { is_opened: true };
+    if (shouldResetEffect) {
+      updatePayload.effect = 'none';
+    }
+
     const { data, error } = await supabase
       .from('messages')
-      .update({
-        is_opened: true,
-        effect: 'none' // CRITICAL: Resetting effect to 'none' prevents it from ever flying again
-      })
+      .update(updatePayload)
       .eq('id', normalizedId)
       .select('id')
       .maybeSingle();
