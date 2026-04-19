@@ -255,7 +255,6 @@ export const ChatBox: React.FC<ChatBoxProps> = ({
   const [previewFireStreak, setPreviewFireStreak] = useState<number | null>(null);
   const [floatingFlamePos, setFloatingFlamePos] = useState({ x: 0, y: 0 });
   const [isDraggingFlame, setIsDraggingFlame] = useState(false);
-  const [mobileKeyboardInset, setMobileKeyboardInset] = useState(0);
   const typingTimeoutRef = useRef<number | undefined>(undefined);
   const partnerTypingTimeoutRef = useRef<number | undefined>(undefined);
   const typingBroadcastChannelRef = useRef<any>(null);
@@ -1433,16 +1432,10 @@ export const ChatBox: React.FC<ChatBoxProps> = ({
 
     const updateKeyboardInset = () => {
       const isMobile = window.matchMedia('(max-width: 1023px)').matches;
-      if (!isMobile || !isComposerFocused) {
-        setMobileKeyboardInset(0);
-        return;
-      }
+      if (!isMobile || !isComposerFocused) return;
 
       const inset = Math.max(0, Math.round(window.innerHeight - (vv.height + vv.offsetTop)));
-      const effectiveInset = inset > 60 ? inset : 0;
-      setMobileKeyboardInset(effectiveInset);
-
-      if (effectiveInset > 0) {
+      if (inset > 60) {
         requestAnimationFrame(() => {
           scrollToBottom('auto');
         });
@@ -1531,7 +1524,6 @@ export const ChatBox: React.FC<ChatBoxProps> = ({
         "flex flex-col h-full overflow-hidden relative transition-all duration-1000",
         isFocusedMode ? "immersion-clear-ui" : "bg-[var(--bg-main)] dark:bg-slate-950"
       )} 
-      style={{ paddingBottom: mobileKeyboardInset ? `${mobileKeyboardInset}px` : undefined }}
       onDragOver={onDragOver} 
       onDragLeave={onDragLeave} 
       onDrop={onDrop}
@@ -2338,9 +2330,7 @@ export const ChatBox: React.FC<ChatBoxProps> = ({
           "p-3 sm:p-4 md:p-6 z-40 transition-all duration-1000 w-full",
           isFocusedMode ? "immersion-clear-ui py-6 sm:py-14" : cn("border-t-[1.5px] border-pink-400/40 dark:border-rose-500/20 shadow-[0_-5px_20px_rgba(0,0,0,0.05)] bg-gradient-to-r backdrop-blur-md", theme?.header || 'from-pink-500/10 to-rose-500/10')
         )}
-        style={{
-          paddingBottom: `calc(env(safe-area-inset-bottom, 0px) + 0.5rem + ${Math.max(0, mobileKeyboardInset - 12)}px)`
-        }}
+        style={{ paddingBottom: 'calc(env(safe-area-inset-bottom, 0px) + 0.5rem)' }}
       >
         <div className={cn("max-w-4xl mx-auto flex flex-col space-y-4", isFocusedMode ? "immersion-clear-ui" : "")}>
           {/* Sticker Ribbon */}
