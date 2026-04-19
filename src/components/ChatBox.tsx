@@ -1035,6 +1035,24 @@ export const ChatBox: React.FC<ChatBoxProps> = ({
     });
   };
 
+  const handleHardReload = async () => {
+    try {
+      if ('serviceWorker' in navigator) {
+        const registrations = await navigator.serviceWorker.getRegistrations();
+        await Promise.all(registrations.map(reg => reg.unregister()));
+      }
+
+      if ('caches' in window) {
+        const cacheKeys = await caches.keys();
+        await Promise.all(cacheKeys.map(key => caches.delete(key)));
+      }
+    } catch (_e) {
+      // Fallback to reload even if cache/service worker cleanup fails.
+    } finally {
+      window.location.reload();
+    }
+  };
+
   const handleSend = async (sizeOverride?: number) => {
     if (text.trim() || sizeOverride) {
       pushTypingStatus(false);
@@ -1758,7 +1776,7 @@ export const ChatBox: React.FC<ChatBoxProps> = ({
         <div className="flex items-center gap-2">
           <button
             type="button"
-            onClick={() => window.location.reload()}
+            onClick={handleHardReload}
             className={cn(
               "p-3 rounded-2xl backdrop-blur-md border shadow-lg hover:scale-105 active:scale-95 transition-all",
               isFocusedMode ? "bg-white/10 text-white border-white/20" : "bg-white/40 dark:bg-white/5 text-pink-500 border-white/20"
