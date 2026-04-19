@@ -671,14 +671,6 @@ export const ChatBox: React.FC<ChatBoxProps> = ({
     
     // Auto-scroll-to-bottom logic if NOT loading earlier
     if (!isLoadingEarlierRef.current && scrollRef.current) {
-       if (!hasInitialBottomSyncRef.current && messages.length > 0) {
-         hasInitialBottomSyncRef.current = true;
-         requestAnimationFrame(() => {
-           scrollToBottom('auto');
-         });
-         return;
-       }
-
        const scrollContainer = scrollRef.current;
        const isNearBottom = scrollContainer.scrollHeight - scrollContainer.scrollTop <= scrollContainer.clientHeight + 250;
        const lastMessage = messages[messages.length - 1];
@@ -1297,6 +1289,26 @@ export const ChatBox: React.FC<ChatBoxProps> = ({
 
   const renderStartIndex = Math.max(0, renderWindowEnd - MAX_RENDERED_MESSAGES);
   const visibleNormalMessages = normalMessages.slice(renderStartIndex, Math.min(renderWindowEnd, normalMessages.length));
+
+  useEffect(() => {
+    if (hasInitialBottomSyncRef.current) return;
+    if (!scrollRef.current) return;
+    if (normalMessages.length === 0) return;
+    if (renderWindowEnd === 0 || visibleNormalMessages.length === 0) return;
+
+    if (renderWindowEnd < normalMessages.length) {
+      setRenderWindowEnd(normalMessages.length);
+      return;
+    }
+
+    hasInitialBottomSyncRef.current = true;
+    requestAnimationFrame(() => {
+      requestAnimationFrame(() => {
+        scrollToBottom('auto');
+      });
+    });
+  }, [normalMessages.length, renderWindowEnd, visibleNormalMessages.length]);
+
   const toHeartVisualFill = (energy: number) => {
     const clamped = Math.max(0, Math.min(100, energy));
     if (clamped >= 100) return 100;
