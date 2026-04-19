@@ -260,6 +260,8 @@ export const ChatBox: React.FC<ChatBoxProps> = ({
   const typingBroadcastChannelRef = useRef<any>(null);
   const lastSideHeartMessageIdRef = useRef<string | number | null>(null);
   const statsRefreshTimerRef = useRef<number | undefined>(undefined);
+  const lastStreakRefreshAtRef = useRef<number>(0);
+  const lastStreakConversationRef = useRef<string>('');
   const trashZoneRef = useRef<HTMLDivElement>(null);
   const touchDragStartRef = useRef<{ x: number; y: number } | null>(null);
   const touchDragMovedRef = useRef(false);
@@ -281,8 +283,12 @@ export const ChatBox: React.FC<ChatBoxProps> = ({
 
   const { messages, setMessages, hasMore, sendMessage, openMessage, uploadImage, saveAsSticker, loadMore } = useChat(currentUser.id, receiver.id, false);
 
-  const toMessageKey = (id: string | number) => String(id);
-  const normalizeHeartEmoji = (emoji: string) => (emoji === '🩷' ? '💖' : emoji);
+  const toMessageKey = (id: string | number) => String(id).trim().toLowerCase();
+  const normalizeReactionEmoji = (emoji: string) => {
+    const compact = emoji.replace(/\uFE0F/g, '');
+    if (compact === '❤' || compact === '♥' || compact === '🩷') return '❤️';
+    return emoji;
+  };
   const incomingDeleteRequestMessageIds = new Set(incomingDeleteRequests.map(r => r.message_id));
   const activeIncomingDeleteRequest = incomingDeleteRequests[0] ?? null;
   const activeIncomingTargetMessage = activeIncomingDeleteRequest
@@ -362,8 +368,7 @@ export const ChatBox: React.FC<ChatBoxProps> = ({
 
     for (const row of rows) {
       const messageKey = toMessageKey(row.message_id);
-      const normalizedEmoji = normalizeHeartEmoji(row.emoji);
-      if (!quickReactionEmojis.includes(normalizedEmoji)) continue;
+      const normalizedEmoji = normalizeReactionEmoji(row.emoji);
 
       const byEmoji = grouped.get(messageKey) ?? new Map<string, { count: number; reactedByMe: boolean }>();
       const item = byEmoji.get(normalizedEmoji) ?? { count: 0, reactedByMe: false };
@@ -442,7 +447,7 @@ export const ChatBox: React.FC<ChatBoxProps> = ({
 
   const toggleMessageReaction = async (messageId: string | number, emoji: string) => {
     if (String(messageId).startsWith('temp-')) return;
-    const normalizedEmoji = normalizeHeartEmoji(emoji);
+    const normalizedEmoji = normalizeReactionEmoji(emoji);
     if (!quickReactionEmojis.includes(normalizedEmoji)) return;
 
     if (!isReactionFeatureEnabled) {
@@ -455,7 +460,7 @@ export const ChatBox: React.FC<ChatBoxProps> = ({
 
     const messageKey = toMessageKey(messageId);
     const current = messageReactions[messageKey] ?? [];
-    const existing = current.find(r => r.emoji === normalizedEmoji && r.reactedByMe);
+    const existing = current.find(r => normalizeReactionEmoji(r.emoji) === normalizedEmoji && r.reactedByMe);
 
     if (existing) {
       const { error } = await supabase
@@ -463,7 +468,7 @@ export const ChatBox: React.FC<ChatBoxProps> = ({
         .delete()
         .eq('message_id', messageId as any)
         .eq('user_id', currentUser.id)
-        .in('emoji', [normalizedEmoji, '🩷']);
+        .in('emoji', [normalizedEmoji, '❤️', '❤', '♥', '🩷']);
       if (error) {
         console.warn('⚠️ [Reaction] failed to remove reaction:', error.message);
         return;
@@ -471,7 +476,10 @@ export const ChatBox: React.FC<ChatBoxProps> = ({
     } else {
       const { error } = await supabase
         .from('message_reactions')
-        .insert([{ message_id: messageId as any, user_id: currentUser.id, emoji: normalizedEmoji }]);
+        .upsert(
+          [{ message_id: messageId as any, user_id: currentUser.id, emoji: normalizedEmoji }],
+          { onConflict: 'message_id,user_id,emoji', ignoreDuplicates: true }
+        );
       if (error) {
         console.warn('⚠️ [Reaction] failed to add reaction:', error.message);
         return;
@@ -538,6 +546,10 @@ export const ChatBox: React.FC<ChatBoxProps> = ({
 
   useEffect(() => {
     const refreshDailyLoveStats = async () => {
+      const STREAK_LOOKBACK_DAYS = 45;
+      const STREAK_FETCH_LIMIT = 400;
+      const STREAK_REFRESH_COOLDOWN_MS = 5 * 60 * 1000;
+
       const now = new Date();
       const startOfToday = new Date(now);
       startOfToday.setHours(0, 0, 0, 0);
@@ -556,8 +568,17 @@ export const ChatBox: React.FC<ChatBoxProps> = ({
       const todayCount = count ?? 0;
       setDailyHeartEnergy(Math.min(100, todayCount));
 
+      const conversationKey = `${currentUser.id}:${receiver.id}`;
+      const shouldRefreshStreakHistory =
+        lastStreakConversationRef.current !== conversationKey ||
+        Date.now() - lastStreakRefreshAtRef.current > STREAK_REFRESH_COOLDOWN_MS;
+
+      if (!shouldRefreshStreakHistory) {
+        return;
+      }
+
       const dayWindowStart = new Date(startOfToday);
-      dayWindowStart.setDate(dayWindowStart.getDate() - 180);
+      dayWindowStart.setDate(dayWindowStart.getDate() - STREAK_LOOKBACK_DAYS);
 
       const { data: streakRows } = await supabase
         .from('messages')
@@ -565,7 +586,7 @@ export const ChatBox: React.FC<ChatBoxProps> = ({
         .or(pairFilter)
         .gte('created_at', dayWindowStart.toISOString())
         .order('created_at', { ascending: false })
-        .limit(1500);
+        .limit(STREAK_FETCH_LIMIT);
 
       const toDayKey = (date: Date) => {
         const y = date.getFullYear();
@@ -596,6 +617,8 @@ export const ChatBox: React.FC<ChatBoxProps> = ({
       }
 
       setDailyFireStreak(streak);
+      lastStreakConversationRef.current = conversationKey;
+      lastStreakRefreshAtRef.current = Date.now();
     };
 
     if (statsRefreshTimerRef.current) {
@@ -637,6 +660,7 @@ export const ChatBox: React.FC<ChatBoxProps> = ({
   const prevNormalMessagesLengthRef = useRef<number>(0);
   const isNearBottomRef = useRef<boolean>(true);
   const hasInitialBottomSyncRef = useRef<boolean>(false);
+  const hasUserInteractedWithScrollRef = useRef<boolean>(false);
 
   const handleLoadMore = async () => {
     if (isLoadingMore || !hasMore) return;
@@ -684,6 +708,7 @@ export const ChatBox: React.FC<ChatBoxProps> = ({
 
   useEffect(() => {
     hasInitialBottomSyncRef.current = false;
+    hasUserInteractedWithScrollRef.current = false;
   }, [currentUser.id, receiver.id]);
   const viewportRef = useRef<HTMLDivElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -972,6 +997,11 @@ export const ChatBox: React.FC<ChatBoxProps> = ({
 
   const handleScroll = async (e: React.UIEvent<HTMLDivElement>) => {
     const { scrollTop, scrollHeight, clientHeight } = e.currentTarget;
+    const isTrustedScroll = (e.nativeEvent as Event).isTrusted;
+    if (isTrustedScroll) {
+      hasUserInteractedWithScrollRef.current = true;
+    }
+
     const isNearBottom = scrollHeight - scrollTop <= clientHeight + 120;
     isNearBottomRef.current = isNearBottom;
 
@@ -990,7 +1020,7 @@ export const ChatBox: React.FC<ChatBoxProps> = ({
     const isNearTop = scrollTop <= 20;
     const cooledDown = Date.now() - lastLoadMoreAtRef.current > 400;
 
-    if (isNearTop && hasMore && !isLoadingMore && canTriggerTopLoadRef.current && cooledDown) {
+     if (isNearTop && hasMore && !isLoadingMore && canTriggerTopLoadRef.current && hasUserInteractedWithScrollRef.current && cooledDown) {
        handleLoadMore();
     }
   };
@@ -1307,6 +1337,15 @@ export const ChatBox: React.FC<ChatBoxProps> = ({
 
   const renderStartIndex = Math.max(0, renderWindowEnd - MAX_RENDERED_MESSAGES);
   const visibleNormalMessages = normalMessages.slice(renderStartIndex, Math.min(renderWindowEnd, normalMessages.length));
+
+  useEffect(() => {
+    if (!isReactionFeatureEnabled) return;
+    const visibleIds = visibleNormalMessages
+      .map(m => m.id)
+      .filter(id => !String(id).startsWith('temp-'));
+    if (!visibleIds.length) return;
+    refreshMessageReactions(visibleIds);
+  }, [visibleNormalMessages, isReactionFeatureEnabled]);
 
   useEffect(() => {
     if (hasInitialBottomSyncRef.current) return;
@@ -2053,8 +2092,9 @@ export const ChatBox: React.FC<ChatBoxProps> = ({
             const isLastRead = msg.id === delayedLastReadId;
             const isUnreadDivider = msg.id === firstUnreadId;
             const hasExplosion = activeExplosions[msg.id];
-            const reactionItems = messageReactions[toMessageKey(msg.id)] ?? [];
-            const isReactionPickerOpen = activeReactionPickerFor === msg.id;
+            const messageKey = toMessageKey(msg.id);
+            const reactionItems = messageReactions[messageKey] ?? messageReactions[String(msg.id)] ?? [];
+            const isReactionPickerOpen = activeReactionPickerFor !== null && toMessageKey(activeReactionPickerFor) === messageKey;
             const hasIncomingDeleteRequest = incomingDeleteRequestMessageIds.has(toMessageKey(msg.id));
             const textScale = getTextScaleFromEffect(msg.effect);
             const textFontPx = Math.max(8, Math.min(56, Math.round(15 * textScale)));
@@ -2213,7 +2253,7 @@ export const ChatBox: React.FC<ChatBoxProps> = ({
                         <div className="relative">
                           <button
                             type="button"
-                            onClick={() => setActiveReactionPickerFor(prev => (prev === msg.id ? null : msg.id))}
+                            onClick={() => setActiveReactionPickerFor(prev => (prev !== null && toMessageKey(prev) === messageKey ? null : msg.id))}
                             className={cn(
                               "w-6 h-6 rounded-full border flex items-center justify-center transition-all",
                               isReactionPickerOpen
