@@ -1265,8 +1265,14 @@ export const ChatBox: React.FC<ChatBoxProps> = ({
 
   const renderStartIndex = Math.max(0, renderWindowEnd - MAX_RENDERED_MESSAGES);
   const visibleNormalMessages = normalMessages.slice(renderStartIndex, Math.min(renderWindowEnd, normalMessages.length));
-  const heartMainFill = Math.max(10, Math.min(100, dailyHeartEnergy));
-  const heartSmallFill = Math.max(16, Math.min(100, dailyHeartEnergy + 10));
+  const toHeartVisualFill = (energy: number) => {
+    const clamped = Math.max(0, Math.min(100, energy));
+    if (clamped >= 100) return 100;
+    // Non-linear mapping so high values (e.g. 88%) still look clearly below full.
+    return Math.max(0, Math.min(92, clamped * 0.72 + Math.pow(clamped / 100, 2) * 8));
+  };
+  const heartMainFill = toHeartVisualFill(dailyHeartEnergy);
+  const heartSmallFill = toHeartVisualFill(dailyHeartEnergy);
   const reviewStages = [10, 20, 30, 50, 100] as const;
   const isPreviewFire = previewFireStreak !== null;
   const effectiveFireStreak = previewFireStreak ?? dailyFireStreak;
@@ -1814,8 +1820,8 @@ export const ChatBox: React.FC<ChatBoxProps> = ({
                 transform: 'translate(-50%, -50%) rotate(-14deg)',
                 animation: sideHeartBurstKey > 0 ? 'rose-heart-main-burst 0.9s cubic-bezier(0.2,0.8,0.25,1)' : undefined,
                 background: isDarkMode
-                  ? `linear-gradient(to top, rgba(248,113,113,0.98) 0%, rgba(244,63,94,0.9) ${heartMainFill}%, rgba(244,114,182,0.18) ${Math.min(100, heartMainFill + 14)}%, rgba(255,228,230,0.08) 100%)`
-                  : `linear-gradient(to top, rgba(239,68,68,0.92) 0%, rgba(244,63,94,0.82) ${heartMainFill}%, rgba(251,113,133,0.22) ${Math.min(100, heartMainFill + 14)}%, rgba(255,255,255,0.38) 100%)`,
+                  ? `linear-gradient(to top, rgba(244,63,94,0.94) 0%, rgba(244,63,94,0.94) ${heartMainFill}%, rgba(255,228,230,0.1) ${heartMainFill}%, rgba(255,228,230,0.1) 100%)`
+                  : `linear-gradient(to top, rgba(239,68,68,0.9) 0%, rgba(239,68,68,0.9) ${heartMainFill}%, rgba(251,113,133,0.2) ${heartMainFill}%, rgba(251,113,133,0.2) 100%)`,
                 WebkitMaskImage: "url(\"data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'><path d='M12 21.35l-1.45-1.32C5.4 15.36 2 12.28 2 8.5A5.5 5.5 0 0 1 7.5 3c1.74 0 3.41.81 4.5 2.09A6 6 0 0 1 16.5 3 5.5 5.5 0 0 1 22 8.5c0 3.78-3.4 6.86-8.55 11.54z'/></svg>\")",
                 maskImage: "url(\"data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'><path d='M12 21.35l-1.45-1.32C5.4 15.36 2 12.28 2 8.5A5.5 5.5 0 0 1 7.5 3c1.74 0 3.41.81 4.5 2.09A6 6 0 0 1 16.5 3 5.5 5.5 0 0 1 22 8.5c0 3.78-3.4 6.86-8.55 11.54z'/></svg>\")",
                 WebkitMaskSize: 'contain',
@@ -1837,8 +1843,8 @@ export const ChatBox: React.FC<ChatBoxProps> = ({
                 transform: 'translate(-50%, -50%) rotate(18deg)',
                 animation: sideHeartBurstKey > 0 ? 'rose-heart-small-burst 0.86s cubic-bezier(0.2,0.8,0.25,1)' : undefined,
                 background: isDarkMode
-                  ? `linear-gradient(to top, rgba(248,113,113,0.95) 0%, rgba(244,63,94,0.86) ${heartSmallFill}%, rgba(251,113,133,0.16) ${Math.min(100, heartSmallFill + 14)}%, rgba(255,228,230,0.08) 100%)`
-                  : `linear-gradient(to top, rgba(239,68,68,0.9) 0%, rgba(244,63,94,0.8) ${heartSmallFill}%, rgba(251,113,133,0.2) ${Math.min(100, heartSmallFill + 14)}%, rgba(255,255,255,0.46) 100%)`,
+                  ? `linear-gradient(to top, rgba(244,63,94,0.9) 0%, rgba(244,63,94,0.9) ${heartSmallFill}%, rgba(255,228,230,0.08) ${heartSmallFill}%, rgba(255,228,230,0.08) 100%)`
+                  : `linear-gradient(to top, rgba(239,68,68,0.86) 0%, rgba(239,68,68,0.86) ${heartSmallFill}%, rgba(251,113,133,0.18) ${heartSmallFill}%, rgba(251,113,133,0.18) 100%)`,
                 WebkitMaskImage: "url(\"data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'><path d='M12 21.35l-1.45-1.32C5.4 15.36 2 12.28 2 8.5A5.5 5.5 0 0 1 7.5 3c1.74 0 3.41.81 4.5 2.09A6 6 0 0 1 16.5 3 5.5 5.5 0 0 1 22 8.5c0 3.78-3.4 6.86-8.55 11.54z'/></svg>\")",
                 maskImage: "url(\"data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'><path d='M12 21.35l-1.45-1.32C5.4 15.36 2 12.28 2 8.5A5.5 5.5 0 0 1 7.5 3c1.74 0 3.41.81 4.5 2.09A6 6 0 0 1 16.5 3 5.5 5.5 0 0 1 22 8.5c0 3.78-3.4 6.86-8.55 11.54z'/></svg>\")",
                 WebkitMaskSize: 'contain',
