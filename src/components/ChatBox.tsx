@@ -128,13 +128,25 @@ export const ChatBox: React.FC<ChatBoxProps> = ({
   const [sendButtonCoords, setSendButtonCoords] = useState<{ x: string; y: string }>({ x: '80%', y: '80%' });
   const [renderWindowEnd, setRenderWindowEnd] = useState(0);
   const [touchDragPosition, setTouchDragPosition] = useState<{ x: number; y: number } | null>(null);
+  const [sideHeartBurstKey, setSideHeartBurstKey] = useState(0);
+  const [dailyHeartEnergy, setDailyHeartEnergy] = useState(0);
+  const [dailyFireStreak, setDailyFireStreak] = useState(0);
+  const [hasMutualToday, setHasMutualToday] = useState(false);
+  const [showStreakOverlay, setShowStreakOverlay] = useState(false);
+  const [previewFireStreak, setPreviewFireStreak] = useState<number | null>(null);
+  const [floatingFlamePos, setFloatingFlamePos] = useState({ x: 0, y: 0 });
+  const [isDraggingFlame, setIsDraggingFlame] = useState(false);
   const typingTimeoutRef = useRef<number | undefined>(undefined);
   const partnerTypingTimeoutRef = useRef<number | undefined>(undefined);
   const typingBroadcastChannelRef = useRef<any>(null);
+  const lastSideHeartMessageIdRef = useRef<string | number | null>(null);
+  const statsRefreshTimerRef = useRef<number | undefined>(undefined);
   const trashZoneRef = useRef<HTMLDivElement>(null);
   const touchDragStartRef = useRef<{ x: number; y: number } | null>(null);
   const touchDragMovedRef = useRef(false);
   const suppressNextStickerClickRef = useRef(false);
+  const flamePointerOffsetRef = useRef({ x: 0, y: 0 });
+  const flameMovedDuringDragRef = useRef(false);
 
   const { messages, setMessages, hasMore, sendMessage, openMessage, uploadImage, saveAsSticker, loadMore } = useChat(currentUser.id, receiver.id, false);
 
@@ -142,6 +154,83 @@ export const ChatBox: React.FC<ChatBoxProps> = ({
     if (!setTypingStatusGlobal) return;
     await setTypingStatusGlobal(isTyping);
   };
+
+  useEffect(() => {
+    const refreshDailyLoveStats = async () => {
+      const now = new Date();
+      const startOfToday = new Date(now);
+      startOfToday.setHours(0, 0, 0, 0);
+      const startOfTomorrow = new Date(startOfToday);
+      startOfTomorrow.setDate(startOfTomorrow.getDate() + 1);
+
+      const pairFilter = `and(sender_id.eq.${currentUser.id},receiver_id.eq.${receiver.id}),and(sender_id.eq.${receiver.id},receiver_id.eq.${currentUser.id})`;
+
+      const { count } = await supabase
+        .from('messages')
+        .select('id', { count: 'exact', head: true })
+        .or(pairFilter)
+        .gte('created_at', startOfToday.toISOString())
+        .lt('created_at', startOfTomorrow.toISOString());
+
+      const todayCount = count ?? 0;
+      setDailyHeartEnergy(Math.min(100, todayCount));
+
+      const dayWindowStart = new Date(startOfToday);
+      dayWindowStart.setDate(dayWindowStart.getDate() - 180);
+
+      const { data: streakRows } = await supabase
+        .from('messages')
+        .select('sender_id, created_at')
+        .or(pairFilter)
+        .gte('created_at', dayWindowStart.toISOString())
+        .order('created_at', { ascending: false })
+        .limit(1500);
+
+      const toDayKey = (date: Date) => {
+        const y = date.getFullYear();
+        const m = String(date.getMonth() + 1).padStart(2, '0');
+        const d = String(date.getDate()).padStart(2, '0');
+        return `${y}-${m}-${d}`;
+      };
+
+      const activeDays = new Map<string, { me: boolean; partner: boolean }>();
+      for (const row of streakRows ?? []) {
+        const key = toDayKey(new Date(row.created_at));
+        const state = activeDays.get(key) ?? { me: false, partner: false };
+        if (row.sender_id === currentUser.id) state.me = true;
+        if (row.sender_id === receiver.id) state.partner = true;
+        activeDays.set(key, state);
+      }
+
+      let streak = 0;
+      const cursor = new Date(startOfToday);
+      const todayState = activeDays.get(toDayKey(startOfToday));
+      setHasMutualToday(Boolean(todayState?.me && todayState?.partner));
+      while (true) {
+        const dayState = activeDays.get(toDayKey(cursor));
+        if (!dayState?.me || !dayState?.partner) break;
+        streak += 1;
+        cursor.setDate(cursor.getDate() - 1);
+        if (streak > 365) break;
+      }
+
+      setDailyFireStreak(streak);
+    };
+
+    if (statsRefreshTimerRef.current) {
+      window.clearTimeout(statsRefreshTimerRef.current);
+    }
+
+    statsRefreshTimerRef.current = window.setTimeout(() => {
+      refreshDailyLoveStats();
+    }, 120);
+
+    return () => {
+      if (statsRefreshTimerRef.current) {
+        window.clearTimeout(statsRefreshTimerRef.current);
+      }
+    };
+  }, [currentUser.id, receiver.id, messages.length]);
 
   // Sync openedHeartIds with coming updates from the other person (MANDATORY: MUST BE AFTER messages IS DEFINED)
   useEffect(() => {
@@ -449,17 +538,24 @@ export const ChatBox: React.FC<ChatBoxProps> = ({
 
   useEffect(() => {
     const lastMessage = messages[messages.length - 1];
-    if (lastMessage) {
-       const msgTime = new Date(lastMessage.created_at).getTime();
-       const isRecent = Date.now() - msgTime < 3000;
-       if (isRecent) {
-         notificationAudioRef.current?.play().catch(() => {});
-         if (lastMessage.image_url && !lastMessage.id.toString().startsWith('temp-')) {
-            setActiveExplosions(prev => ({ ...prev, [lastMessage.id]: lastMessage.image_url! }));
-         }
-       }
+    if (!lastMessage) return;
+
+    const msgTime = new Date(lastMessage.created_at).getTime();
+    const isRecent = Date.now() - msgTime < 3000;
+    if (!isRecent) return;
+
+    notificationAudioRef.current?.play().catch(() => {});
+
+    const isTemp = lastMessage.id.toString().startsWith('temp-');
+    if (!isTemp && lastSideHeartMessageIdRef.current !== lastMessage.id) {
+      setSideHeartBurstKey(prev => prev + 1);
+      lastSideHeartMessageIdRef.current = lastMessage.id;
     }
-  }, [messages.length]);
+
+    if (lastMessage.image_url && !isTemp) {
+      setActiveExplosions(prev => ({ ...prev, [lastMessage.id]: lastMessage.image_url! }));
+    }
+  }, [messages]);
 
   const scrollToBottom = (behavior: ScrollBehavior = 'smooth') => {
     if (scrollRef.current) {
@@ -739,6 +835,129 @@ export const ChatBox: React.FC<ChatBoxProps> = ({
 
   const renderStartIndex = Math.max(0, renderWindowEnd - MAX_RENDERED_MESSAGES);
   const visibleNormalMessages = normalMessages.slice(renderStartIndex, Math.min(renderWindowEnd, normalMessages.length));
+  const heartMainFill = Math.max(10, Math.min(100, dailyHeartEnergy));
+  const heartSmallFill = Math.max(16, Math.min(100, dailyHeartEnergy + 10));
+  const reviewStages = [10, 20, 30, 50, 100] as const;
+  const isPreviewFire = previewFireStreak !== null;
+  const effectiveFireStreak = previewFireStreak ?? dailyFireStreak;
+  const effectiveMutualToday = isPreviewFire ? true : hasMutualToday;
+  const fireChain = effectiveFireStreak > 0 ? '🔥'.repeat(Math.min(5, effectiveFireStreak)) : '';
+  const flamePower = effectiveMutualToday
+    ? Math.min(1, 0.68 + effectiveFireStreak * 0.06)
+    : Math.min(0.55, 0.24 + effectiveFireStreak * 0.035);
+  const flameSpeed = effectiveMutualToday
+    ? Math.max(0.34, 0.92 - effectiveFireStreak * 0.04)
+    : Math.max(0.6, 1.24 - effectiveFireStreak * 0.02);
+  const flameTier = effectiveFireStreak >= 100 ? 5 : effectiveFireStreak >= 50 ? 4 : effectiveFireStreak >= 30 ? 3 : effectiveFireStreak >= 20 ? 2 : effectiveFireStreak >= 10 ? 1 : 0;
+  const flameOuterPath = flameTier >= 5
+    ? 'M33 2c5 10 4 17-2 24-4 5-6 9-6 14 0 9 7 16 16 16s16-7 16-16c0-10-6-17-24-38z'
+    : flameTier >= 3
+      ? 'M34 4c3 9 1 15-4 21-4 5-5 8-5 13 0 8 6 14 14 14s14-6 14-14c0-9-5-15-19-34z'
+      : 'M34 5c2 9-1 14-5 19-3 4-4 7-4 11 0 6 5 11 11 11s11-5 11-11c0-7-4-12-13-30z';
+  const flameInnerPath = flameTier >= 5
+    ? 'M33 18c2 5 1 9-2 13-2 3-3 5-3 8 0 6 4 10 10 10s10-4 10-10c0-6-4-11-15-21z'
+    : flameTier >= 3
+      ? 'M33 20c1 4 0 8-2 11-2 3-2 4-2 7 0 5 4 8 8 8s8-3 8-8c0-5-3-9-12-18z'
+      : 'M33 22c1 4 0 7-2 10-2 2-2 4-2 6 0 4 3 7 7 7s7-3 7-7c0-4-2-8-10-16z';
+  const flameSizeBoost = flameTier >= 5 ? 30 : flameTier >= 4 ? 22 : flameTier >= 3 ? 14 : flameTier >= 2 ? 8 : flameTier >= 1 ? 4 : 0;
+  const floatingFlameSize = 56 + flameSizeBoost;
+  const overlayFlameScale = flameTier >= 5 ? 1.35 : flameTier >= 4 ? 1.24 : flameTier >= 3 ? 1.16 : flameTier >= 2 ? 1.08 : flameTier >= 1 ? 1.03 : 1;
+  const flameModeLabel = flameTier >= 5 ? 'DIVINE 100' : flameTier >= 4 ? 'TITAN 50' : flameTier >= 3 ? 'PHOENIX 30' : flameTier >= 2 ? 'BLAZE 20' : flameTier >= 1 ? 'WARM 10' : 'EMBER';
+  const floatingFlameStorageKey = `lovechat:floating-flame:${[currentUser.id, receiver.id].sort().join('-')}`;
+
+  const clampFloatingFlame = (nextX: number, nextY: number) => {
+    const padding = 8;
+    const maxX = Math.max(padding, window.innerWidth - floatingFlameSize - padding);
+    const maxY = Math.max(padding, window.innerHeight - floatingFlameSize - padding);
+    return {
+      x: Math.min(Math.max(nextX, padding), maxX),
+      y: Math.min(Math.max(nextY, padding), maxY)
+    };
+  };
+
+  const handleFloatingFlamePointerDown = (event: React.PointerEvent<HTMLButtonElement>) => {
+    event.preventDefault();
+    flameMovedDuringDragRef.current = false;
+    setIsDraggingFlame(true);
+    flamePointerOffsetRef.current = {
+      x: event.clientX - floatingFlamePos.x,
+      y: event.clientY - floatingFlamePos.y
+    };
+  };
+
+  const handleFloatingFlameClick = () => {
+    if (flameMovedDuringDragRef.current) {
+      flameMovedDuringDragRef.current = false;
+      return;
+    }
+    setShowStreakOverlay(true);
+  };
+
+  useEffect(() => {
+    const fallback = clampFloatingFlame(window.innerWidth - 90, 96);
+
+    try {
+      const raw = window.localStorage.getItem(floatingFlameStorageKey);
+      if (!raw) {
+        setFloatingFlamePos(fallback);
+        return;
+      }
+
+      const parsed = JSON.parse(raw) as { x?: number; y?: number };
+      if (typeof parsed.x === 'number' && typeof parsed.y === 'number') {
+        setFloatingFlamePos(clampFloatingFlame(parsed.x, parsed.y));
+      } else {
+        setFloatingFlamePos(fallback);
+      }
+    } catch {
+      setFloatingFlamePos(fallback);
+    }
+  }, [floatingFlameStorageKey]);
+
+  useEffect(() => {
+    if (floatingFlamePos.x === 0 && floatingFlamePos.y === 0) return;
+    try {
+      window.localStorage.setItem(floatingFlameStorageKey, JSON.stringify(floatingFlamePos));
+    } catch {
+      // Ignore storage errors (private mode/quota)
+    }
+  }, [floatingFlamePos, floatingFlameStorageKey]);
+
+  useEffect(() => {
+    if (!isDraggingFlame) return;
+
+    const onPointerMove = (event: PointerEvent) => {
+      const nextX = event.clientX - flamePointerOffsetRef.current.x;
+      const nextY = event.clientY - flamePointerOffsetRef.current.y;
+      flameMovedDuringDragRef.current = true;
+      setFloatingFlamePos(clampFloatingFlame(nextX, nextY));
+    };
+
+    const onPointerUp = () => {
+      setIsDraggingFlame(false);
+    };
+
+    window.addEventListener('pointermove', onPointerMove);
+    window.addEventListener('pointerup', onPointerUp);
+
+    return () => {
+      window.removeEventListener('pointermove', onPointerMove);
+      window.removeEventListener('pointerup', onPointerUp);
+    };
+  }, [isDraggingFlame]);
+
+  useEffect(() => {
+    const onResize = () => {
+      setFloatingFlamePos(prev => clampFloatingFlame(prev.x, prev.y));
+    };
+
+    window.addEventListener('resize', onResize);
+    return () => window.removeEventListener('resize', onResize);
+  }, []);
+
+  useEffect(() => {
+    setFloatingFlamePos(prev => clampFloatingFlame(prev.x, prev.y));
+  }, [floatingFlameSize]);
 
   const updateSendButtonCoords = () => {
     if (!sendButtonRef.current || !viewportRef.current) {
@@ -815,6 +1034,59 @@ export const ChatBox: React.FC<ChatBoxProps> = ({
       <audio ref={notificationAudioRef} src="https://assets.mixkit.co/active_storage/sfx/2358/2358-preview.mp3" />
       
       {showWelcomeFireworks && <Confetti />}
+
+      <button
+        type="button"
+        onPointerDown={handleFloatingFlamePointerDown}
+        onClick={handleFloatingFlameClick}
+        className={cn(
+          "fixed z-[1450] rounded-full touch-none select-none",
+          isDraggingFlame ? "cursor-grabbing scale-110" : "cursor-grab hover:scale-105"
+        )}
+        style={{
+          left: `${floatingFlamePos.x}px`,
+          top: `${floatingFlamePos.y}px`,
+          width: `${floatingFlameSize}px`,
+          height: `${floatingFlameSize}px`
+        }}
+        title="Kéo để dời lửa, chạm để xem chuỗi"
+      >
+        {flameTier >= 2 && <span className={cn("flame-evolution-ring", isPreviewFire && "flame-preview-ring")} />}
+        {flameTier >= 4 && <span className={cn("flame-evolution-ring flame-evolution-ring--2", isPreviewFire && "flame-preview-ring")} />}
+        {flameTier >= 3 && <span className={cn("flame-evolution-spark flame-evolution-spark--a", isPreviewFire && "flame-preview-spark")} />}
+        {flameTier >= 3 && <span className={cn("flame-evolution-spark flame-evolution-spark--b", isPreviewFire && "flame-preview-spark")} />}
+        <svg viewBox="0 0 64 64" className={cn(`w-full h-full flame-svg flame-tier-${flameTier}`, isPreviewFire && "flame-preview")} style={{ opacity: 0.62 + flamePower * 0.38, filter: `drop-shadow(0 0 ${8 + flamePower * 16}px ${isPreviewFire ? 'rgba(255,255,255,0.42)' : `rgba(251,113,133,${0.3 + flamePower * 0.55})`})` }}>
+          <defs>
+            <linearGradient id="flameOuterFloat" x1="0" y1="1" x2="0" y2="0">
+              <stop offset="0%" stopColor={isPreviewFire ? '#9ca3af' : '#ef4444'} />
+              <stop offset="45%" stopColor={isPreviewFire ? '#d1d5db' : flameTier >= 3 ? '#f97316' : '#fb7185'} />
+              <stop offset="100%" stopColor={isPreviewFire ? '#f3f4f6' : '#fde68a'} />
+            </linearGradient>
+            <linearGradient id="flameInnerFloat" x1="0" y1="1" x2="0" y2="0">
+              <stop offset="0%" stopColor={isPreviewFire ? '#e5e7eb' : '#fb7185'} />
+              <stop offset="100%" stopColor={isPreviewFire ? '#ffffff' : flameTier >= 5 ? '#fff7c2' : '#ffffff'} />
+            </linearGradient>
+          </defs>
+          {flameTier >= 5 && (
+            <path d="M22 34c-3-5-3-9 0-14 1 4 4 6 7 8-2 2-4 4-7 6z" fill={isPreviewFire ? '#d1d5db' : '#f59e0b'} opacity="0.85" className="flame-outer" style={{ animationDuration: `${Math.max(0.3, flameSpeed - 0.16)}s` }} />
+          )}
+          {flameTier >= 5 && (
+            <path d="M46 34c3-5 3-9 0-14-1 4-4 6-7 8 2 2 4 4 7 6z" fill={isPreviewFire ? '#d1d5db' : '#f59e0b'} opacity="0.85" className="flame-outer" style={{ animationDuration: `${Math.max(0.3, flameSpeed - 0.16)}s` }} />
+          )}
+          <path
+            d={flameOuterPath}
+            fill="url(#flameOuterFloat)"
+            className="flame-outer"
+            style={{ animationDuration: `${flameSpeed}s` }}
+          />
+          <path
+            d={flameInnerPath}
+            fill="url(#flameInnerFloat)"
+            className="flame-inner"
+            style={{ animationDuration: `${Math.max(0.35, flameSpeed - 0.12)}s` }}
+          />
+        </svg>
+      </button>
       
       {pops.map(pop => (
         <HeartPop key={pop.id} x={pop.x} y={pop.y} onComplete={() => setPops(prev => prev.filter(p => p.id !== pop.id))} />
@@ -853,6 +1125,89 @@ export const ChatBox: React.FC<ChatBoxProps> = ({
         </div>
       )}
 
+      {showStreakOverlay && (
+        <div className="fixed inset-0 z-[1800] bg-black/80 backdrop-blur-xl flex flex-col items-center justify-center p-6">
+          <button
+            type="button"
+            onClick={() => {
+              setShowStreakOverlay(false);
+              setPreviewFireStreak(null);
+            }}
+            className="absolute top-6 right-6 w-11 h-11 rounded-full bg-white/10 border border-white/20 text-white flex items-center justify-center"
+            title="Đóng"
+          >
+            <X className="w-5 h-5" />
+          </button>
+
+          <div className="relative w-[clamp(160px,36vw,320px)] h-[clamp(190px,42vw,360px)] flex items-center justify-center" style={{ transform: `scale(${overlayFlameScale})` }}>
+            {flameTier >= 2 && <span className={cn("flame-evolution-ring", isPreviewFire && "flame-preview-ring")} />}
+            {flameTier >= 4 && <span className={cn("flame-evolution-ring flame-evolution-ring--2", isPreviewFire && "flame-preview-ring")} />}
+            {flameTier >= 3 && <span className={cn("flame-evolution-spark flame-evolution-spark--a", isPreviewFire && "flame-preview-spark")} />}
+            {flameTier >= 3 && <span className={cn("flame-evolution-spark flame-evolution-spark--b", isPreviewFire && "flame-preview-spark")} />}
+            <svg viewBox="0 0 64 64" className={cn(`w-full h-full flame-svg flame-tier-${flameTier}`, isPreviewFire && "flame-preview")} style={{ opacity: 0.7 + flamePower * 0.3, filter: `drop-shadow(0 0 ${18 + flamePower * 28}px ${isPreviewFire ? 'rgba(255,255,255,0.45)' : `rgba(251,113,133,${0.45 + flamePower * 0.4})`})` }}>
+              <defs>
+                <linearGradient id="flameOuterFull" x1="0" y1="1" x2="0" y2="0">
+                  <stop offset="0%" stopColor={isPreviewFire ? '#9ca3af' : '#ef4444'} />
+                  <stop offset="42%" stopColor={isPreviewFire ? '#d1d5db' : flameTier >= 3 ? '#f97316' : '#fb7185'} />
+                  <stop offset="100%" stopColor={isPreviewFire ? '#f3f4f6' : '#fde68a'} />
+                </linearGradient>
+                <linearGradient id="flameInnerFull" x1="0" y1="1" x2="0" y2="0">
+                  <stop offset="0%" stopColor={isPreviewFire ? '#e5e7eb' : '#fb7185'} />
+                  <stop offset="100%" stopColor={isPreviewFire ? '#ffffff' : flameTier >= 5 ? '#fff7c2' : '#fff7ed'} />
+                </linearGradient>
+              </defs>
+              {flameTier >= 5 && (
+                <path d="M22 34c-3-5-3-9 0-14 1 4 4 6 7 8-2 2-4 4-7 6z" fill={isPreviewFire ? '#d1d5db' : '#f59e0b'} opacity="0.9" className="flame-outer" style={{ animationDuration: `${Math.max(0.28, flameSpeed - 0.2)}s` }} />
+              )}
+              {flameTier >= 5 && (
+                <path d="M46 34c3-5 3-9 0-14-1 4-4 6-7 8 2 2 4 4 7 6z" fill={isPreviewFire ? '#d1d5db' : '#f59e0b'} opacity="0.9" className="flame-outer" style={{ animationDuration: `${Math.max(0.28, flameSpeed - 0.2)}s` }} />
+              )}
+              <path
+                d={flameOuterPath}
+                fill="url(#flameOuterFull)"
+                className="flame-outer"
+                style={{ animationDuration: `${Math.max(0.34, flameSpeed - 0.1)}s` }}
+              />
+              <path
+                d={flameInnerPath}
+                fill="url(#flameInnerFull)"
+                className="flame-inner"
+                style={{ animationDuration: `${Math.max(0.28, flameSpeed - 0.22)}s` }}
+              />
+            </svg>
+          </div>
+
+          <div className="mt-8 text-center text-white">
+            <p className="text-5xl sm:text-6xl font-black">{effectiveFireStreak}</p>
+            <p className="mt-2 text-sm sm:text-base font-bold uppercase tracking-[0.2em] text-rose-200">ngày liên tiếp</p>
+            <p className="mt-1 text-[10px] sm:text-xs font-black tracking-[0.25em] text-amber-200/90">{isPreviewFire ? `${flameModeLabel} PREVIEW` : flameModeLabel}</p>
+            <p className="mt-4 text-xs sm:text-sm text-rose-100/85">Nhắn mỗi ngày để lửa cháy mãnh liệt hơn</p>
+            <div className="mt-5 flex flex-wrap items-center justify-center gap-2">
+              {reviewStages.map(stage => (
+                <button
+                  key={stage}
+                  type="button"
+                  onClick={() => setPreviewFireStreak(stage)}
+                  className={cn(
+                    "px-3 py-1.5 rounded-full text-[11px] sm:text-xs font-black tracking-wide border transition-colors",
+                    previewFireStreak === stage ? "bg-rose-400 border-rose-200 text-white" : "bg-white/10 border-white/20 text-rose-100 hover:bg-white/20"
+                  )}
+                >
+                  {stage} ngày
+                </button>
+              ))}
+              <button
+                type="button"
+                onClick={() => setPreviewFireStreak(null)}
+                className="px-3 py-1.5 rounded-full text-[11px] sm:text-xs font-black tracking-wide border bg-rose-500/80 hover:bg-rose-400 border-rose-200 text-white transition-colors"
+              >
+                Dữ liệu thật
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* Floating Toggle Button during Focused Mode */}
       {isFocusedMode && (
         <button 
@@ -883,9 +1238,9 @@ export const ChatBox: React.FC<ChatBoxProps> = ({
                <span className="max-w-[120px] sm:max-w-[180px] md:max-w-[280px] truncate inline-block align-bottom">{receiver.username}</span>
                <span className="ml-2 text-pink-500">❤️</span>
             </h3>
-            <p className={cn("text-[10px] font-black uppercase tracking-widest flex items-center transition-all", isFocusedMode ? "text-white/70" : "text-pink-400")}>
-               <span className={cn("w-2 h-2 rounded-full mr-2", isOnline ? "bg-green-400 animate-pulse shadow-[0_0_8px_rgba(74,222,128,0.8)]" : "bg-gray-300")} />
-               {isOnline ? 'Online' : 'Offline'}
+            <p className={cn("text-[9px] sm:text-[10px] font-black tracking-wide flex items-center whitespace-nowrap transition-all", isFocusedMode ? "text-white/70" : "text-pink-400")}>
+               <span className={cn("inline-block w-2 h-2 rounded-full mr-2", isOnline ? "bg-green-400 animate-pulse shadow-[0_0_8px_rgba(74,222,128,0.8)]" : "bg-gray-300")} />
+              {fireChain ? `${fireChain} ${effectiveFireStreak} ngày` : 'Chưa có chuỗi'} · Tim {dailyHeartEnergy}%
             </p>
           </div>
         </div>
@@ -1017,6 +1372,75 @@ export const ChatBox: React.FC<ChatBoxProps> = ({
         
         {/* Full screen background is handled globally in App.tsx as fixed layer for IMMERSION mode */}
 
+        {/* Persistent Theme Signature - Asymmetric 3D hearts (responsive, light/dark aware) */}
+        {!customBg && (
+          <>
+            <div
+              key={`rose-heart-main-${sideHeartBurstKey}`}
+              className="absolute left-[56%] top-[48%] pointer-events-none z-0 transition-all duration-1000"
+              style={{
+                width: 'clamp(260px, 62vw, 520px)',
+                height: 'clamp(230px, 56vw, 480px)',
+                transform: 'translate(-50%, -50%) rotate(-14deg)',
+                animation: sideHeartBurstKey > 0 ? 'rose-heart-main-burst 0.9s cubic-bezier(0.2,0.8,0.25,1)' : undefined,
+                background: isDarkMode
+                  ? `linear-gradient(to top, rgba(248,113,113,0.98) 0%, rgba(244,63,94,0.9) ${heartMainFill}%, rgba(244,114,182,0.18) ${Math.min(100, heartMainFill + 14)}%, rgba(255,228,230,0.08) 100%)`
+                  : `linear-gradient(to top, rgba(239,68,68,0.92) 0%, rgba(244,63,94,0.82) ${heartMainFill}%, rgba(251,113,133,0.22) ${Math.min(100, heartMainFill + 14)}%, rgba(255,255,255,0.38) 100%)`,
+                WebkitMaskImage: "url(\"data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'><path d='M12 21.35l-1.45-1.32C5.4 15.36 2 12.28 2 8.5A5.5 5.5 0 0 1 7.5 3c1.74 0 3.41.81 4.5 2.09A6 6 0 0 1 16.5 3 5.5 5.5 0 0 1 22 8.5c0 3.78-3.4 6.86-8.55 11.54z'/></svg>\")",
+                maskImage: "url(\"data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'><path d='M12 21.35l-1.45-1.32C5.4 15.36 2 12.28 2 8.5A5.5 5.5 0 0 1 7.5 3c1.74 0 3.41.81 4.5 2.09A6 6 0 0 1 16.5 3 5.5 5.5 0 0 1 22 8.5c0 3.78-3.4 6.86-8.55 11.54z'/></svg>\")",
+                WebkitMaskSize: 'contain',
+                maskSize: 'contain',
+                WebkitMaskRepeat: 'no-repeat',
+                maskRepeat: 'no-repeat',
+                filter: isDarkMode
+                  ? 'drop-shadow(0 30px 56px rgba(244,63,94,0.56))'
+                  : 'drop-shadow(0 28px 46px rgba(239,68,68,0.46))'
+              }}
+            />
+
+            <div
+              key={`rose-heart-small-${sideHeartBurstKey}`}
+              className="absolute left-[30%] top-[62%] pointer-events-none z-0 transition-all duration-1000"
+              style={{
+                width: 'clamp(140px, 30vw, 260px)',
+                height: 'clamp(120px, 26vw, 220px)',
+                transform: 'translate(-50%, -50%) rotate(18deg)',
+                animation: sideHeartBurstKey > 0 ? 'rose-heart-small-burst 0.86s cubic-bezier(0.2,0.8,0.25,1)' : undefined,
+                background: isDarkMode
+                  ? `linear-gradient(to top, rgba(248,113,113,0.95) 0%, rgba(244,63,94,0.86) ${heartSmallFill}%, rgba(251,113,133,0.16) ${Math.min(100, heartSmallFill + 14)}%, rgba(255,228,230,0.08) 100%)`
+                  : `linear-gradient(to top, rgba(239,68,68,0.9) 0%, rgba(244,63,94,0.8) ${heartSmallFill}%, rgba(251,113,133,0.2) ${Math.min(100, heartSmallFill + 14)}%, rgba(255,255,255,0.46) 100%)`,
+                WebkitMaskImage: "url(\"data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'><path d='M12 21.35l-1.45-1.32C5.4 15.36 2 12.28 2 8.5A5.5 5.5 0 0 1 7.5 3c1.74 0 3.41.81 4.5 2.09A6 6 0 0 1 16.5 3 5.5 5.5 0 0 1 22 8.5c0 3.78-3.4 6.86-8.55 11.54z'/></svg>\")",
+                maskImage: "url(\"data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'><path d='M12 21.35l-1.45-1.32C5.4 15.36 2 12.28 2 8.5A5.5 5.5 0 0 1 7.5 3c1.74 0 3.41.81 4.5 2.09A6 6 0 0 1 16.5 3 5.5 5.5 0 0 1 22 8.5c0 3.78-3.4 6.86-8.55 11.54z'/></svg>\")",
+                WebkitMaskSize: 'contain',
+                maskSize: 'contain',
+                WebkitMaskRepeat: 'no-repeat',
+                maskRepeat: 'no-repeat',
+                filter: isDarkMode
+                  ? 'drop-shadow(0 18px 30px rgba(244,63,94,0.52))'
+                  : 'drop-shadow(0 16px 26px rgba(239,68,68,0.46))'
+              }}
+            />
+
+            <div
+              className="absolute left-[64%] top-[47%] pointer-events-none z-0 transition-all duration-1000"
+              style={{
+                width: 'clamp(300px, 74vw, 640px)',
+                height: 'clamp(260px, 66vw, 560px)',
+                transform: 'translate(-50%, -50%) rotate(-12deg)',
+                background: isDarkMode ? 'rgba(248,113,113,0.26)' : 'rgba(239,68,68,0.22)',
+                WebkitMaskImage: "url(\"data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'><path d='M12 21.35l-1.45-1.32C5.4 15.36 2 12.28 2 8.5A5.5 5.5 0 0 1 7.5 3c1.74 0 3.41.81 4.5 2.09A6 6 0 0 1 16.5 3 5.5 5.5 0 0 1 22 8.5c0 3.78-3.4 6.86-8.55 11.54z'/></svg>\")",
+                maskImage: "url(\"data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'><path d='M12 21.35l-1.45-1.32C5.4 15.36 2 12.28 2 8.5A5.5 5.5 0 0 1 7.5 3c1.74 0 3.41.81 4.5 2.09A6 6 0 0 1 16.5 3 5.5 5.5 0 0 1 22 8.5c0 3.78-3.4 6.86-8.55 11.54z'/></svg>\")",
+                WebkitMaskSize: 'contain',
+                maskSize: 'contain',
+                WebkitMaskRepeat: 'no-repeat',
+                maskRepeat: 'no-repeat',
+                filter: 'blur(24px)',
+                opacity: isDarkMode ? 0.8 : 0.72
+              }}
+            />
+          </>
+        )}
+
         {/* Subtle Dynamic Pattern Overlay - TRANSFORMED BY THEME (Only if no custom bg) */}
         {!customBg && (
           <div 
@@ -1045,7 +1469,7 @@ export const ChatBox: React.FC<ChatBoxProps> = ({
         <div className={cn("absolute bottom-[-10%] right-[-10%] w-[50%] h-[50%] blur-[100px] rounded-full animate-pulse pointer-events-none transition-all duration-1000", theme?.glow || "bg-pink-200/30")} style={{ animationDuration: '10s', animationDelay: '2s' }} />
         
         <SparklingDust />
-        
+
         {showScrollToBottom && (
           <button 
             onClick={() => {
@@ -1284,7 +1708,9 @@ export const ChatBox: React.FC<ChatBoxProps> = ({
             "flex items-center gap-1.5 sm:gap-2 rounded-[2.25rem] sm:rounded-[3rem] p-1.5 sm:p-2 pr-2 sm:pr-4 relative transition-all duration-700",
             isFocusedMode 
               ? "bg-white/5 backdrop-blur-2xl border border-white/20 shadow-[0_0_20px_rgba(236,72,153,0.15)]" 
-              : "bg-[var(--bg-input)] border border-pink-100 dark:border-slate-800 shadow-inner"
+              : (isDarkMode
+                  ? "bg-black/90 border border-white/15 shadow-inner"
+                  : "bg-[var(--bg-input)] border border-pink-100 shadow-inner")
           )}>
             <div className="relative">
               <button 
@@ -1299,7 +1725,9 @@ export const ChatBox: React.FC<ChatBoxProps> = ({
                       ? (isComposerFocused
                           ? "bg-white/75 text-slate-800 border-white/80 hover:scale-105"
                           : "bg-white/5 text-white/80 border-white/15 hover:scale-105")
-                      : "bg-white/80 dark:bg-white/10 text-slate-500 border-pink-100 dark:border-white/10 hover:scale-105"
+                      : (isDarkMode
+                          ? "bg-white/10 text-white border-white/20 hover:scale-105"
+                          : "bg-white/80 text-slate-500 border-pink-100 hover:scale-105")
                 )}
                 title="Tùy chọn gửi"
               >
@@ -1377,7 +1805,9 @@ export const ChatBox: React.FC<ChatBoxProps> = ({
                 ? (isComposerFocused
                     ? "bg-white/85 border-white/80 focus-within:ring-2 focus-within:ring-white/70"
                     : "bg-white/5 border-white/15 focus-within:ring-2 focus-within:ring-white/40")
-                : "bg-slate-100/50 dark:bg-white/5 border-pink-50 dark:border-white/5 focus-within:ring-2 focus-within:ring-pink-500/20"
+                : (isDarkMode
+                    ? "bg-black/80 border-white/15 focus-within:ring-2 focus-within:ring-white/25"
+                    : "bg-slate-100/50 border-pink-50 focus-within:ring-2 focus-within:ring-pink-500/20")
             )}>
               <input 
                 type="text" 
@@ -1393,8 +1823,11 @@ export const ChatBox: React.FC<ChatBoxProps> = ({
                     ? (isComposerFocused
                         ? "text-slate-900 placeholder:text-slate-500"
                         : "text-white placeholder:text-white/60")
-                    : "text-slate-800 dark:text-white placeholder:text-slate-400"
+                    : (isDarkMode
+                        ? "text-white placeholder:text-white/70"
+                        : "text-slate-800 placeholder:text-slate-400")
                 )}
+                style={isDarkMode ? { WebkitTextFillColor: '#ffffff' } : undefined}
               />
               {sentFlyingMessages.length >= 3 && (
                 <div className="absolute -top-10 left-1/2 -translate-x-1/2 px-4 py-1.5 bg-pink-500 text-white text-[10px] font-black rounded-full shadow-xl animate-bounce">

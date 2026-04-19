@@ -26,6 +26,7 @@ export function useChat(currentUserId: string, receiverId?: string, isGlobalPres
   const presenceChannelRef = useRef<any>(null);
   const isPresenceSubscribed = useRef(false);
   const heartbeatTimerRef = useRef<number | null>(null);
+  const presenceSyncTimerRef = useRef<number | null>(null);
 
   useEffect(() => {
     if (!currentUserId || !receiverId) {
@@ -100,12 +101,25 @@ export function useChat(currentUserId: string, receiverId?: string, isGlobalPres
       const state = channel.presenceState();
       const online: Record<string, boolean> = {};
       const typing: Record<string, boolean> = {};
+      const now = Date.now();
+      const ONLINE_TTL_MS = 70000;
 
       Object.entries(state).forEach(([key, userStates]) => {
-        online[key] = true;
         const states = Array.isArray(userStates) ? (userStates as any[]) : [];
+        const isOnline = states.some((meta) => {
+          const onlineAt = meta?.online_at;
+          if (!onlineAt) return true;
+          const ts = Date.parse(String(onlineAt));
+          if (Number.isNaN(ts)) return true;
+          return now - ts <= ONLINE_TTL_MS;
+        });
+
+        if (isOnline) {
+          online[key] = true;
+        }
+
         // A user can have multiple metas (multi-tab/device). Typing should be true if any meta is typing.
-        if (states.some((meta) => Boolean(meta?.isTyping))) {
+        if (states.some((meta) => Boolean(meta?.isTyping) && (meta?.typing_at ? now - Date.parse(String(meta.typing_at)) < 8000 : true))) {
           typing[key] = true;
         }
       });
@@ -133,6 +147,14 @@ export function useChat(currentUserId: string, receiverId?: string, isGlobalPres
                 // silent fail
               });
             }, 20000);
+
+            if (presenceSyncTimerRef.current) {
+              window.clearInterval(presenceSyncTimerRef.current);
+            }
+            // Fallback in case presence events are dropped.
+            presenceSyncTimerRef.current = window.setInterval(() => {
+              rebuildPresenceState();
+            }, 5000);
           } catch (e) {
             // silent fail
           }
@@ -147,6 +169,10 @@ export function useChat(currentUserId: string, receiverId?: string, isGlobalPres
         window.clearInterval(heartbeatTimerRef.current);
         heartbeatTimerRef.current = null;
       }
+      if (presenceSyncTimerRef.current) {
+        window.clearInterval(presenceSyncTimerRef.current);
+        presenceSyncTimerRef.current = null;
+      }
       presenceChannelRef.current = null;
       supabase.removeChannel(channel);
     };
@@ -158,7 +184,8 @@ export function useChat(currentUserId: string, receiverId?: string, isGlobalPres
     try {
       await presenceChannelRef.current.track({
         online_at: new Date().toISOString(),
-        isTyping
+        isTyping,
+        typing_at: new Date().toISOString()
       });
     } catch (err) {
       // silent fail
