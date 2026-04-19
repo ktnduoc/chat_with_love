@@ -81,6 +81,15 @@ export function useChat(currentUserId: string, receiverId?: string, isGlobalPres
           setMessages(prev => prev.map(m => m.id === updated.id ? updated : m));
         }
       })
+      .on('postgres_changes', {
+        event: 'DELETE',
+        schema: 'public',
+        table: 'messages'
+      }, (payload) => {
+        const deleted = payload.old as Partial<Message>;
+        if (!deleted?.id) return;
+        setMessages(prev => prev.filter(m => m.id !== deleted.id));
+      })
       .subscribe();
 
     return () => {

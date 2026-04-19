@@ -12,6 +12,7 @@ import { HeartExplosion } from './HeartExplosion';
 import { ScratchToReveal } from './ScratchToReveal';
 import { supabase } from '../lib/supabase';
 import twemoji from 'twemoji';
+import { useSwipeable } from 'react-swipeable';
 import { clsx, type ClassValue } from 'clsx';
 import { twMerge } from 'tailwind-merge';
 
@@ -26,14 +27,38 @@ function renderTwemoji(text: string) {
   });
 }
 
-function getTwemojiSvgUrl(emoji: string) {
+function getTwemojiSvgCandidates(emoji: string) {
   const rawCodepoint = twemoji.convert.toCodePoint(emoji);
   const normalizedCodepoint = rawCodepoint
     .split('-')
     .filter(part => part !== 'fe0f')
     .join('-');
-  return `https://cdn.jsdelivr.net/gh/twitter/twemoji@14.0.2/assets/svg/${normalizedCodepoint}.svg`;
+
+  const candidates = [
+    `https://cdn.jsdelivr.net/gh/twitter/twemoji@14.0.2/assets/svg/${normalizedCodepoint}.svg`,
+    `https://cdn.jsdelivr.net/gh/twitter/twemoji@14.0.2/assets/svg/${rawCodepoint}.svg`
+  ];
+
+  return Array.from(new Set(candidates));
 }
+
+const ReactionIcon: React.FC<{ emoji: string; className?: string }> = ({ emoji, className }) => {
+  const candidates = getTwemojiSvgCandidates(emoji);
+  const [candidateIndex, setCandidateIndex] = useState(0);
+
+  if (candidateIndex >= candidates.length) {
+    return <span className={className}>{emoji}</span>;
+  }
+
+  return (
+    <img
+      src={candidates[candidateIndex]}
+      alt={emoji}
+      className={className}
+      onError={() => setCandidateIndex(prev => prev + 1)}
+    />
+  );
+};
 
 const SmartImage: React.FC<{ src: string; className?: string; alt?: string }> = ({ src, className, alt }) => {
   const [isLoaded, setIsLoaded] = useState(false);
@@ -89,6 +114,80 @@ interface MessageReactionView {
   count: number;
   reactedByMe: boolean;
 }
+
+interface MessageDeleteRequestRow {
+  id: number;
+  message_id: string;
+  requester_id: string;
+  approver_id: string;
+  status: 'pending' | 'accepted' | 'rejected';
+}
+
+interface SwipeToDeleteWrapperProps {
+  enabled: boolean;
+  alignRight?: boolean;
+  onTriggerDelete: () => void;
+  onSwipeStateChange?: (isSwiping: boolean) => void;
+  children: React.ReactNode;
+}
+
+const SwipeToDeleteWrapper: React.FC<SwipeToDeleteWrapperProps> = ({
+  enabled,
+  alignRight = false,
+  onTriggerDelete,
+  onSwipeStateChange,
+  children
+}) => {
+  const [offsetX, setOffsetX] = useState(0);
+  const [isSwiping, setIsSwiping] = useState(false);
+
+  const reset = () => {
+    setOffsetX(0);
+    setIsSwiping(false);
+    onSwipeStateChange?.(false);
+  };
+
+  const handlers = useSwipeable({
+    trackTouch: true,
+    trackMouse: false,
+    preventScrollOnSwipe: false,
+    delta: 10,
+    onSwiping: (data) => {
+      if (!enabled) return;
+      if (data.dir !== 'Left') return;
+      if (data.absX <= data.absY * 1.15) return;
+      const next = -Math.min(130, Math.max(0, data.absX));
+      setOffsetX(next);
+      if (!isSwiping) {
+        setIsSwiping(true);
+        onSwipeStateChange?.(true);
+      }
+    },
+    onSwipedLeft: (data) => {
+      if (!enabled) return;
+      const shouldDelete = data.absX >= 90;
+      reset();
+      if (shouldDelete) onTriggerDelete();
+    },
+    onSwiped: () => {
+      reset();
+    }
+  });
+
+  return (
+    <div
+      {...(enabled ? handlers : {})}
+      className={cn(
+        'w-full flex transition-transform',
+        alignRight ? 'justify-end' : 'justify-start',
+        isSwiping ? 'duration-75' : 'duration-200'
+      )}
+      style={{ transform: offsetX === 0 ? undefined : `translateX(${offsetX}px)` }}
+    >
+      {children}
+    </div>
+  );
+};
 
 export const ChatBox: React.FC<ChatBoxProps> = ({ 
   currentUser, 
@@ -170,12 +269,87 @@ export const ChatBox: React.FC<ChatBoxProps> = ({
   const [messageReactions, setMessageReactions] = useState<Record<string, MessageReactionView[]>>({});
   const [activeReactionPickerFor, setActiveReactionPickerFor] = useState<string | number | null>(null);
   const [isReactionFeatureEnabled, setIsReactionFeatureEnabled] = useState(true);
-  const quickReactionEmojis = ['❤️', '💖', '🧡', '💛', '💚', '💙', '💜'];
+  const [incomingDeleteRequests, setIncomingDeleteRequests] = useState<MessageDeleteRequestRow[]>([]);
+  const [pendingDeleteRequestMessageIds, setPendingDeleteRequestMessageIds] = useState<Set<string>>(new Set());
+  const quickReactionEmojis = ['❤️', '💖', '🧡'];
 
   const { messages, setMessages, hasMore, sendMessage, openMessage, uploadImage, saveAsSticker, loadMore } = useChat(currentUser.id, receiver.id, false);
 
   const toMessageKey = (id: string | number) => String(id);
   const normalizeHeartEmoji = (emoji: string) => (emoji === '🩷' ? '💖' : emoji);
+  const incomingDeleteRequestMessageIds = new Set(incomingDeleteRequests.map(r => r.message_id));
+  const activeIncomingDeleteRequest = incomingDeleteRequests[0] ?? null;
+  const activeIncomingTargetMessage = activeIncomingDeleteRequest
+    ? messages.find(m => toMessageKey(m.id) === activeIncomingDeleteRequest.message_id)
+    : null;
+
+  const fetchDeleteRequests = async () => {
+    const pairFilter = `and(requester_id.eq.${currentUser.id},approver_id.eq.${receiver.id}),and(requester_id.eq.${receiver.id},approver_id.eq.${currentUser.id})`;
+    const { data, error } = await supabase
+      .from('message_delete_requests')
+      .select('id,message_id,requester_id,approver_id,status')
+      .or(pairFilter)
+      .eq('status', 'pending');
+
+    if (error) {
+      console.warn('⚠️ [DeleteRequest] Failed to fetch requests:', error.message);
+      return;
+    }
+
+    const rows = (data ?? []) as MessageDeleteRequestRow[];
+    setIncomingDeleteRequests(rows.filter(r => r.approver_id === currentUser.id));
+    setPendingDeleteRequestMessageIds(new Set(rows.filter(r => r.requester_id === currentUser.id).map(r => r.message_id)));
+  };
+
+  const requestDeleteMessage = async (messageId: string | number) => {
+    const messageKey = toMessageKey(messageId);
+    if (messageKey.startsWith('temp-') || pendingDeleteRequestMessageIds.has(messageKey)) return;
+
+    const { error } = await supabase
+      .from('message_delete_requests')
+      .insert([{ message_id: messageKey, requester_id: currentUser.id, approver_id: receiver.id, status: 'pending' }]);
+
+    if (error) {
+      console.warn('⚠️ [DeleteRequest] Failed to create request:', error.message);
+      return;
+    }
+
+    setPendingDeleteRequestMessageIds(prev => new Set(prev).add(messageKey));
+  };
+
+  const respondDeleteRequest = async (request: MessageDeleteRequestRow, accept: boolean) => {
+    const { error: updateError } = await supabase
+      .from('message_delete_requests')
+      .update({
+        status: accept ? 'accepted' : 'rejected',
+        responded_at: new Date().toISOString()
+      })
+      .eq('id', request.id)
+      .eq('approver_id', currentUser.id);
+
+    if (updateError) {
+      console.warn('⚠️ [DeleteRequest] Failed to respond:', updateError.message);
+      return;
+    }
+
+    if (accept) {
+      const { data: deletedRows, error: deleteError } = await supabase
+        .from('messages')
+        .delete()
+        .eq('id', request.message_id)
+        .select('id');
+
+      if (deleteError) {
+        console.warn('⚠️ [DeleteRequest] Failed to delete message after accept:', deleteError.message);
+      } else if (!deletedRows || deletedRows.length === 0) {
+        console.warn('⚠️ [DeleteRequest] Message was not deleted (likely blocked by RLS policy).');
+      } else {
+        setMessages(prev => prev.filter(m => toMessageKey(m.id) !== request.message_id));
+      }
+    }
+
+    fetchDeleteRequests();
+  };
 
   const mapReactions = (rows: MessageReactionRow[]) => {
     const grouped = new Map<string, Map<string, { count: number; reactedByMe: boolean }>>();
@@ -326,6 +500,23 @@ export const ChatBox: React.FC<ChatBoxProps> = ({
       supabase.removeChannel(channel);
     };
   }, [currentUser.id, receiver.id, isReactionFeatureEnabled]);
+
+  useEffect(() => {
+    fetchDeleteRequests();
+  }, [currentUser.id, receiver.id, messages.length]);
+
+  useEffect(() => {
+    const channel = supabase
+      .channel(`message-delete-requests-${currentUser.id}-${receiver.id}`)
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'message_delete_requests' }, () => {
+        fetchDeleteRequests();
+      })
+      .subscribe();
+
+    return () => {
+      supabase.removeChannel(channel);
+    };
+  }, [currentUser.id, receiver.id]);
 
   useEffect(() => {
     const refreshDailyLoveStats = async () => {
@@ -1700,6 +1891,7 @@ export const ChatBox: React.FC<ChatBoxProps> = ({
             const hasExplosion = activeExplosions[msg.id];
             const reactionItems = messageReactions[toMessageKey(msg.id)] ?? [];
             const isReactionPickerOpen = activeReactionPickerFor === msg.id;
+            const hasIncomingDeleteRequest = incomingDeleteRequestMessageIds.has(toMessageKey(msg.id));
             
             // Check if this is an "Old" message being loaded historically
             // We give historical messages instant presence (no fade-in) for stability
@@ -1722,8 +1914,16 @@ export const ChatBox: React.FC<ChatBoxProps> = ({
                   isMe ? "items-end" : "items-start",
                   !isHistorical && "animate-in fade-in slide-in-from-bottom-2 duration-500"
                 )}>
-                  <div className={cn("max-w-[82%] sm:max-w-[75%] md:max-w-[70%] group relative")}>
-                    {hasExplosion && <StickerExplosion imageUrl={hasExplosion} onComplete={() => setActiveExplosions(prev => { const n = {...prev}; delete n[msg.id]; return n; })} />}
+                  <SwipeToDeleteWrapper
+                    enabled={false}
+                    alignRight={isMe}
+                    onTriggerDelete={() => requestDeleteMessage(msg.id)}
+                  >
+                    <div className={cn(
+                      "max-w-[92%] sm:max-w-[86%] md:max-w-[80%] group relative",
+                      hasIncomingDeleteRequest && "ring-2 ring-amber-300/80 rounded-2xl px-1 py-1"
+                    )}>
+                      {hasExplosion && <StickerExplosion imageUrl={hasExplosion} onComplete={() => setActiveExplosions(prev => { const n = {...prev}; delete n[msg.id]; return n; })} />}
                     
                     {msg.image_url ? (
                       <div className="relative mb-2">
@@ -1835,7 +2035,7 @@ export const ChatBox: React.FC<ChatBoxProps> = ({
                             title="Bỏ cảm xúc"
                           >
                             <span className="inline-flex items-center gap-1">
-                              <img src={getTwemojiSvgUrl(item.emoji)} alt={item.emoji} className="w-3.5 h-3.5" />
+                              <ReactionIcon emoji={item.emoji} className="w-3.5 h-3.5" />
                               <span>{item.count}</span>
                             </span>
                           </button>
@@ -1871,15 +2071,40 @@ export const ChatBox: React.FC<ChatBoxProps> = ({
                                   onClick={() => toggleMessageReaction(msg.id, emoji)}
                                   className="w-6 h-6 flex items-center justify-center hover:scale-125 transition-transform"
                                 >
-                                  <img src={getTwemojiSvgUrl(emoji)} alt={emoji} className="w-5 h-5" />
+                                  <ReactionIcon emoji={emoji} className="w-5 h-5" />
                                 </button>
                               ))}
+                              <span className="mx-0.5 h-4 w-px bg-white/25" />
+                              <button
+                                type="button"
+                                onClick={async () => {
+                                  await requestDeleteMessage(msg.id);
+                                  setActiveReactionPickerFor(null);
+                                }}
+                                disabled={pendingDeleteRequestMessageIds.has(toMessageKey(msg.id))}
+                                className={cn(
+                                  "w-6 h-6 rounded-full flex items-center justify-center transition-all",
+                                  pendingDeleteRequestMessageIds.has(toMessageKey(msg.id))
+                                    ? "text-amber-200/70 cursor-not-allowed"
+                                    : "text-rose-200 hover:text-rose-100 hover:scale-110"
+                                )}
+                                title={pendingDeleteRequestMessageIds.has(toMessageKey(msg.id)) ? "Đang chờ chấp nhận xóa" : "Yêu cầu xóa tin nhắn"}
+                              >
+                                <Trash2 className="w-4 h-4" />
+                              </button>
                             </div>
                           )}
                         </div>
                       </div>
                     )}
-                  </div>
+                      {pendingDeleteRequestMessageIds.has(toMessageKey(msg.id)) && (
+                        <p className={cn("mt-1 text-[10px] font-bold", isMe ? "text-amber-300 text-right" : "text-amber-300")}>Đang chờ đối phương chấp nhận xóa</p>
+                      )}
+                      {hasIncomingDeleteRequest && (
+                        <p className={cn("mt-1 text-[10px] font-bold", isMe ? "text-amber-200 text-right" : "text-amber-200")}>Người ấy đang xin xóa tin nhắn này</p>
+                      )}
+                    </div>
+                  </SwipeToDeleteWrapper>
                   {isLastRead && (
                     <div className="mt-3 flex items-center justify-end w-full pr-2 animate-in fade-in slide-in-from-top-1 duration-1000">
                        <span className="text-[9px] font-black text-gray-300 mr-3 uppercase tracking-widest italic">Đã xem</span>
@@ -1909,6 +2134,41 @@ export const ChatBox: React.FC<ChatBoxProps> = ({
           )}
         </div>
       </div>
+
+      {activeIncomingDeleteRequest && (
+        <div className="px-4 sm:px-6 md:px-10 pb-2 z-50">
+          <div className="w-full rounded-2xl border border-amber-300/40 bg-amber-500/15 backdrop-blur-md px-4 py-3 flex flex-col gap-3">
+            <div className="flex-1 min-w-0">
+              <p className="text-xs sm:text-sm text-amber-100 font-semibold">
+                Người ấy gửi yêu cầu xóa tin nhắn sau. Bạn có chấp nhận không?
+              </p>
+              <p className="mt-1 text-[11px] sm:text-xs text-amber-50/90 truncate">
+                {activeIncomingTargetMessage
+                  ? (activeIncomingTargetMessage.image_url
+                    ? '[Ảnh/GIF]'
+                    : (activeIncomingTargetMessage.content?.trim() || '(Tin nhắn trống)'))
+                  : '(Không tìm thấy nội dung tin nhắn)'}
+              </p>
+            </div>
+            <div className="w-full flex items-center justify-end gap-2">
+              <button
+                type="button"
+                onClick={() => respondDeleteRequest(activeIncomingDeleteRequest, false)}
+                className="h-9 px-2.5 sm:px-3 rounded-xl bg-white/10 border border-white/20 text-white text-xs font-bold"
+              >
+                Từ chối
+              </button>
+              <button
+                type="button"
+                onClick={() => respondDeleteRequest(activeIncomingDeleteRequest, true)}
+                className="h-9 px-2.5 sm:px-3 rounded-xl bg-rose-500 text-white text-xs font-bold"
+              >
+                Oke lun
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
       <div 
         className={cn(
