@@ -255,6 +255,7 @@ export const ChatBox: React.FC<ChatBoxProps> = ({
   const [previewFireStreak, setPreviewFireStreak] = useState<number | null>(null);
   const [floatingFlamePos, setFloatingFlamePos] = useState({ x: 0, y: 0 });
   const [isDraggingFlame, setIsDraggingFlame] = useState(false);
+  const [mobileKeyboardInset, setMobileKeyboardInset] = useState(0);
   const typingTimeoutRef = useRef<number | undefined>(undefined);
   const partnerTypingTimeoutRef = useRef<number | undefined>(undefined);
   const typingBroadcastChannelRef = useRef<any>(null);
@@ -508,6 +509,18 @@ export const ChatBox: React.FC<ChatBoxProps> = ({
   }, [currentUser.id, receiver.id, isReactionFeatureEnabled]);
 
   useEffect(() => {
+    if (!isReactionFeatureEnabled) return;
+
+    const timer = window.setInterval(() => {
+      refreshMessageReactions();
+    }, 2500);
+
+    return () => {
+      window.clearInterval(timer);
+    };
+  }, [currentUser.id, receiver.id, isReactionFeatureEnabled]);
+
+  useEffect(() => {
     fetchDeleteRequests();
   }, [currentUser.id, receiver.id, messages.length]);
 
@@ -624,6 +637,7 @@ export const ChatBox: React.FC<ChatBoxProps> = ({
   const lastLoadMoreAtRef = useRef<number>(0);
   const prevNormalMessagesLengthRef = useRef<number>(0);
   const isNearBottomRef = useRef<boolean>(true);
+  const hasInitialBottomSyncRef = useRef<boolean>(false);
 
   const handleLoadMore = async () => {
     if (isLoadingMore || !hasMore) return;
@@ -658,6 +672,14 @@ export const ChatBox: React.FC<ChatBoxProps> = ({
     
     // Auto-scroll-to-bottom logic if NOT loading earlier
     if (!isLoadingEarlierRef.current && scrollRef.current) {
+       if (!hasInitialBottomSyncRef.current && messages.length > 0) {
+         hasInitialBottomSyncRef.current = true;
+         requestAnimationFrame(() => {
+           scrollToBottom('auto');
+         });
+         return;
+       }
+
        const scrollContainer = scrollRef.current;
        const isNearBottom = scrollContainer.scrollHeight - scrollContainer.scrollTop <= scrollContainer.clientHeight + 250;
        const lastMessage = messages[messages.length - 1];
@@ -668,6 +690,10 @@ export const ChatBox: React.FC<ChatBoxProps> = ({
        }
     }
   }, [messages, currentUser.id]);
+
+  useEffect(() => {
+    hasInitialBottomSyncRef.current = false;
+  }, [currentUser.id, receiver.id]);
   const viewportRef = useRef<HTMLDivElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const emojiPickerRef = useRef<HTMLDivElement>(null);
@@ -1009,6 +1035,13 @@ export const ChatBox: React.FC<ChatBoxProps> = ({
     }
     pushTypingStatus(false);
     broadcastTypingStatus(false);
+  };
+
+  const handleComposerFocus = () => {
+    setIsComposerFocused(true);
+    requestAnimationFrame(() => {
+      scrollToBottom('auto');
+    });
   };
 
   const handleSend = async (sizeOverride?: number) => {
@@ -1392,6 +1425,41 @@ export const ChatBox: React.FC<ChatBoxProps> = ({
   }, []);
 
   useEffect(() => {
+    if (typeof window === 'undefined') return;
+    if (!('visualViewport' in window)) return;
+
+    const vv = window.visualViewport;
+    if (!vv) return;
+
+    const updateKeyboardInset = () => {
+      const isMobile = window.matchMedia('(max-width: 1023px)').matches;
+      if (!isMobile || !isComposerFocused) {
+        setMobileKeyboardInset(0);
+        return;
+      }
+
+      const inset = Math.max(0, Math.round(window.innerHeight - (vv.height + vv.offsetTop)));
+      const effectiveInset = inset > 60 ? inset : 0;
+      setMobileKeyboardInset(effectiveInset);
+
+      if (effectiveInset > 0) {
+        requestAnimationFrame(() => {
+          scrollToBottom('auto');
+        });
+      }
+    };
+
+    updateKeyboardInset();
+    vv.addEventListener('resize', updateKeyboardInset);
+    vv.addEventListener('scroll', updateKeyboardInset);
+
+    return () => {
+      vv.removeEventListener('resize', updateKeyboardInset);
+      vv.removeEventListener('scroll', updateKeyboardInset);
+    };
+  }, [isComposerFocused]);
+
+  useEffect(() => {
     setFloatingFlamePos(prev => clampFloatingFlame(prev.x, prev.y));
   }, [floatingFlameSize]);
 
@@ -1463,6 +1531,7 @@ export const ChatBox: React.FC<ChatBoxProps> = ({
         "flex flex-col h-full overflow-hidden relative transition-all duration-1000",
         isFocusedMode ? "immersion-clear-ui" : "bg-[var(--bg-main)] dark:bg-slate-950"
       )} 
+      style={{ paddingBottom: mobileKeyboardInset ? `${mobileKeyboardInset}px` : undefined }}
       onDragOver={onDragOver} 
       onDragLeave={onDragLeave} 
       onDrop={onDrop}
@@ -2269,7 +2338,9 @@ export const ChatBox: React.FC<ChatBoxProps> = ({
           "p-3 sm:p-4 md:p-6 z-40 transition-all duration-1000 w-full",
           isFocusedMode ? "immersion-clear-ui py-6 sm:py-14" : cn("border-t-[1.5px] border-pink-400/40 dark:border-rose-500/20 shadow-[0_-5px_20px_rgba(0,0,0,0.05)] bg-gradient-to-r backdrop-blur-md", theme?.header || 'from-pink-500/10 to-rose-500/10')
         )}
-        style={{ paddingBottom: 'calc(env(safe-area-inset-bottom, 0px) + 0.5rem)' }}
+        style={{
+          paddingBottom: `calc(env(safe-area-inset-bottom, 0px) + 0.5rem + ${Math.max(0, mobileKeyboardInset - 12)}px)`
+        }}
       >
         <div className={cn("max-w-4xl mx-auto flex flex-col space-y-4", isFocusedMode ? "immersion-clear-ui" : "")}>
           {/* Sticker Ribbon */}
@@ -2402,7 +2473,7 @@ export const ChatBox: React.FC<ChatBoxProps> = ({
                 type="text" 
                 value={text} 
                 onChange={handleInputChange} 
-                onFocus={() => setIsComposerFocused(true)}
+                onFocus={handleComposerFocus}
                 onBlur={handleComposerBlur}
                 onKeyDown={(e) => e.key === 'Enter' && handleSend()} 
                 placeholder={sentFlyingMessages.length >= 3 ? "Chờ người thương mở tim nhé... ❤️" : "Nhắn lời thương..."}

@@ -51,6 +51,14 @@ CREATE TABLE IF NOT EXISTS public.message_reactions (
   CONSTRAINT message_reactions_message_user_emoji_unique UNIQUE (message_id, user_id, emoji)
 );
 
+DO $$
+BEGIN
+  ALTER PUBLICATION supabase_realtime ADD TABLE public.message_reactions;
+EXCEPTION
+  WHEN duplicate_object THEN NULL;
+  WHEN undefined_object THEN NULL;
+END $$;
+
 ALTER TABLE public.message_reactions ENABLE ROW LEVEL SECURITY;
 
 DROP POLICY IF EXISTS "Authenticated users can view message reactions." ON public.message_reactions;
@@ -78,6 +86,14 @@ CREATE TABLE IF NOT EXISTS public.message_delete_requests (
   created_at TIMESTAMP WITH TIME ZONE DEFAULT timezone('utc'::text, now()) NOT NULL,
   responded_at TIMESTAMP WITH TIME ZONE
 );
+
+DO $$
+BEGIN
+  ALTER PUBLICATION supabase_realtime ADD TABLE public.message_delete_requests;
+EXCEPTION
+  WHEN duplicate_object THEN NULL;
+  WHEN undefined_object THEN NULL;
+END $$;
 
 CREATE UNIQUE INDEX IF NOT EXISTS message_delete_requests_pending_unique
   ON public.message_delete_requests(message_id)
