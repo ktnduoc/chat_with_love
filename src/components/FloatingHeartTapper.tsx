@@ -31,11 +31,13 @@ interface RenderHeart {
 interface FloatingHeartTapperProps {
   targetRef: React.RefObject<HTMLElement | null>;
   onTap?: () => void;
+  onHeartArrive?: () => void;
 }
 
 export const FloatingHeartTapper: React.FC<FloatingHeartTapperProps> = ({
   targetRef,
-  onTap
+  onTap,
+  onHeartArrive
 }) => {
   const HEART_BUTTON_SIZE = 56;
   const HEART_BUTTON_PADDING = 12;
@@ -142,8 +144,13 @@ export const FloatingHeartTapper: React.FC<FloatingHeartTapperProps> = ({
 
     const tick = () => {
       const now = performance.now();
+      const completed = heartsRef.current.filter(heart => now - heart.startAt >= heart.duration);
       const active = heartsRef.current.filter(heart => now - heart.startAt < heart.duration);
       heartsRef.current = active;
+
+      if (completed.length > 0 && onHeartArrive) {
+        completed.forEach(() => onHeartArrive());
+      }
 
       const renderList: RenderHeart[] = active.map(heart => {
         const elapsed = Math.max(0, now - heart.startAt);

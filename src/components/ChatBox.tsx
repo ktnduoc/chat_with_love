@@ -310,6 +310,7 @@ export const ChatBox: React.FC<ChatBoxProps> = ({
   const [dailyHeartEnergy, setDailyHeartEnergy] = useState(0);
   const [animatedHeartEnergy, setAnimatedHeartEnergy] = useState(0);
   const [interactiveHeartCount, setInteractiveHeartCount] = useState(0);
+  const [headerHeartReceiveKey, setHeaderHeartReceiveKey] = useState(0);
   const [dailyFireStreak, setDailyFireStreak] = useState(0);
   const [heartRainParticles, setHeartRainParticles] = useState<HeartRainParticle[]>([]);
   const typingTimeoutRef = useRef<number | undefined>(undefined);
@@ -329,6 +330,8 @@ export const ChatBox: React.FC<ChatBoxProps> = ({
   const headerHeartRef = useRef<HTMLSpanElement>(null);
   const pendingHeartTapCountRef = useRef(0);
   const heartTapFlushTimerRef = useRef<number | undefined>(undefined);
+  const heartTapLiveChannelRef = useRef<any>(null);
+  const remoteHeartTapBufferedRef = useRef(0);
   const [messageReactions, setMessageReactions] = useState<Record<string, MessageReactionView[]>>({});
   const [activeReactionPickerFor, setActiveReactionPickerFor] = useState<string | number | null>(null);
   const [isReactionFeatureEnabled, setIsReactionFeatureEnabled] = useState(true);
@@ -778,6 +781,13 @@ export const ChatBox: React.FC<ChatBoxProps> = ({
 
     const channel = supabase
       .channel(`heart-interactions-${low}-${high}`)
+      .on('broadcast', { event: 'heart-tap' }, ({ payload }) => {
+        const senderId = String((payload as { sender_id?: string } | null)?.sender_id || '');
+        if (senderId === currentUser.id) return;
+        remoteHeartTapBufferedRef.current += 1;
+        setInteractiveHeartCount(prev => prev + 1);
+        triggerHeaderHeartReceive();
+      })
       .on(
         'postgres_changes',
         { event: 'INSERT', schema: 'public', table: 'heart_interactions' },
@@ -786,12 +796,22 @@ export const ChatBox: React.FC<ChatBoxProps> = ({
           if (row.user_low !== low || row.user_high !== high) return;
           const senderId = String(row.sender_id || '');
           if (senderId === currentUser.id) return;
+
+          if (remoteHeartTapBufferedRef.current > 0) {
+            remoteHeartTapBufferedRef.current -= 1;
+            return;
+          }
+
           setInteractiveHeartCount(prev => prev + 1);
+          triggerHeaderHeartReceive();
         }
       )
       .subscribe();
 
+    heartTapLiveChannelRef.current = channel;
+
     return () => {
+      heartTapLiveChannelRef.current = null;
       supabase.removeChannel(channel);
     };
   }, [currentUser.id, receiver.id, heartPendingStorageKey]);
@@ -806,6 +826,10 @@ export const ChatBox: React.FC<ChatBoxProps> = ({
     } catch {
       // ignore storage failures
     }
+  };
+
+  const triggerHeaderHeartReceive = () => {
+    setHeaderHeartReceiveKey(prev => prev + 1);
   };
 
   const flushPendingHeartTaps = () => {
@@ -839,9 +863,23 @@ export const ChatBox: React.FC<ChatBoxProps> = ({
   };
 
   const handleFloatingHeartTap = () => {
+    const [low, high] = currentUser.id < receiver.id
+      ? [currentUser.id, receiver.id]
+      : [receiver.id, currentUser.id];
+
     setInteractiveHeartCount(prev => prev + 1);
     pendingHeartTapCountRef.current += 1;
     persistPendingHeartTaps(pendingHeartTapCountRef.current);
+
+    void heartTapLiveChannelRef.current?.send({
+      type: 'broadcast',
+      event: 'heart-tap',
+      payload: {
+        sender_id: currentUser.id,
+        user_low: low,
+        user_high: high
+      }
+    });
 
     if (heartTapFlushTimerRef.current) return;
 
@@ -1864,7 +1902,11 @@ export const ChatBox: React.FC<ChatBoxProps> = ({
       
       {showWelcomeFireworks && <Confetti />}
 
-      <FloatingHeartTapper targetRef={headerHeartRef} onTap={handleFloatingHeartTap} />
+      <FloatingHeartTapper
+        targetRef={headerHeartRef}
+        onTap={handleFloatingHeartTap}
+        onHeartArrive={triggerHeaderHeartReceive}
+      />
       
       {pops.map(pop => (
         <HeartPop key={pop.id} x={pop.x} y={pop.y} onComplete={() => setPops(prev => prev.filter(p => p.id !== pop.id))} />
@@ -1931,7 +1973,13 @@ export const ChatBox: React.FC<ChatBoxProps> = ({
           <div>
             <h3 className={cn("font-black text-base sm:text-lg md:text-xl flex items-center transition-colors", isFocusedMode ? "text-white drop-shadow-lg" : "text-[var(--text-main)]")}>
                <span className="max-w-[120px] sm:max-w-[180px] md:max-w-[280px] truncate inline-block align-bottom">{receiver.username}</span>
-               <span ref={headerHeartRef} className="ml-2 text-pink-500">❤️</span>
+               <span
+                 key={`header-heart-receive-${headerHeartReceiveKey}`}
+                 ref={headerHeartRef}
+                 className="ml-2 text-pink-500 inline-block origin-center header-heart-receive"
+               >
+                 ❤️
+               </span>
             </h3>
             <p className={cn("text-[9px] sm:text-[10px] font-black tracking-wide flex items-center whitespace-nowrap transition-all", isFocusedMode ? "text-white/70" : "text-pink-400")}>
                <span className={cn("inline-block w-2 h-2 rounded-full mr-2", isOnline ? "bg-green-400 animate-pulse shadow-[0_0_8px_rgba(74,222,128,0.8)]" : "bg-gray-300")} />
@@ -2142,6 +2190,7 @@ export const ChatBox: React.FC<ChatBoxProps> = ({
 
             <div
               className="absolute left-[56%] top-[48%] -translate-x-1/2 -translate-y-1/2 pointer-events-none z-10 text-center"
+              style={{ marginLeft: '-20px' }}
             >
               <p className={cn(
                 "digital-heart-percent text-[4rem] sm:text-[6rem] font-black leading-none opacity-40",
