@@ -347,6 +347,8 @@ export const ChatBox: React.FC<ChatBoxProps> = ({
   const SEND_TEXT_SCALE_MIN = 0.35;
   const SEND_TEXT_SCALE_MAX = 3.4;
   const SEND_TEXT_DRAG_RANGE = 150;
+  const heartPairKey = [currentUser.id, receiver.id].sort().join('-');
+  const heartPendingStorageKey = `lovechat:heart-pending:${heartPairKey}`;
 
   const { messages, setMessages, hasMore, sendMessage, openMessage, uploadImage, saveAsSticker, loadMore } = useChat(currentUser.id, receiver.id, false);
 
@@ -745,6 +747,16 @@ export const ChatBox: React.FC<ChatBoxProps> = ({
       ? [currentUser.id, receiver.id]
       : [receiver.id, currentUser.id];
 
+    let pendingFromStorage = 0;
+    try {
+      const rawPending = window.localStorage.getItem(heartPendingStorageKey);
+      const parsedPending = Number(rawPending || '0');
+      pendingFromStorage = Number.isFinite(parsedPending) ? Math.max(0, Math.floor(parsedPending)) : 0;
+    } catch {
+      pendingFromStorage = 0;
+    }
+    pendingHeartTapCountRef.current = pendingFromStorage;
+
     const loadHeartInteractionCount = async () => {
       const { count } = await supabase
         .from('heart_interactions')
@@ -752,10 +764,17 @@ export const ChatBox: React.FC<ChatBoxProps> = ({
         .eq('user_low', low)
         .eq('user_high', high);
 
-      setInteractiveHeartCount(count ?? 0);
+      setInteractiveHeartCount((count ?? 0) + pendingFromStorage);
     };
 
     void loadHeartInteractionCount();
+
+    if (pendingFromStorage > 0) {
+      heartTapFlushTimerRef.current = window.setTimeout(() => {
+        heartTapFlushTimerRef.current = undefined;
+        flushPendingHeartTaps();
+      }, 5000);
+    }
 
     const channel = supabase
       .channel(`heart-interactions-${low}-${high}`)
@@ -775,19 +794,31 @@ export const ChatBox: React.FC<ChatBoxProps> = ({
     return () => {
       supabase.removeChannel(channel);
     };
-  }, [currentUser.id, receiver.id]);
+  }, [currentUser.id, receiver.id, heartPendingStorageKey]);
+
+  const persistPendingHeartTaps = (count: number) => {
+    try {
+      if (count > 0) {
+        window.localStorage.setItem(heartPendingStorageKey, String(count));
+      } else {
+        window.localStorage.removeItem(heartPendingStorageKey);
+      }
+    } catch {
+      // ignore storage failures
+    }
+  };
 
   const flushPendingHeartTaps = () => {
     const batchCount = pendingHeartTapCountRef.current;
     if (batchCount <= 0) return;
 
     pendingHeartTapCountRef.current = 0;
+    persistPendingHeartTaps(0);
 
     const [low, high] = currentUser.id < receiver.id
       ? [currentUser.id, receiver.id]
       : [receiver.id, currentUser.id];
 
-    setInteractiveHeartCount(prev => prev + batchCount);
     setSideHeartBurstKey(prev => prev + 1);
 
     const rows = Array.from({ length: batchCount }, () => ({
@@ -799,11 +830,18 @@ export const ChatBox: React.FC<ChatBoxProps> = ({
 
     void supabase
       .from('heart_interactions')
-      .insert(rows);
+      .insert(rows)
+      .then(({ error }) => {
+        if (!error) return;
+        pendingHeartTapCountRef.current += batchCount;
+        persistPendingHeartTaps(pendingHeartTapCountRef.current);
+      });
   };
 
   const handleFloatingHeartTap = () => {
+    setInteractiveHeartCount(prev => prev + 1);
     pendingHeartTapCountRef.current += 1;
+    persistPendingHeartTaps(pendingHeartTapCountRef.current);
 
     if (heartTapFlushTimerRef.current) return;
 
@@ -2106,7 +2144,7 @@ export const ChatBox: React.FC<ChatBoxProps> = ({
               className="absolute left-[56%] top-[48%] -translate-x-1/2 -translate-y-1/2 pointer-events-none z-10 text-center"
             >
               <p className={cn(
-                "digital-heart-percent text-[5rem] sm:text-[7.5rem] font-black leading-none opacity-40",
+                "digital-heart-percent text-[4rem] sm:text-[6rem] font-black leading-none opacity-40",
                 isDarkMode ? "text-white" : "text-rose-700"
               )}>
                 {Math.round(animatedHeartEnergy)}%

@@ -5,8 +5,10 @@ interface FlyingHeart {
   id: number;
   sx: number;
   sy: number;
-  cx: number;
-  cy: number;
+  c1x: number;
+  c1y: number;
+  c2x: number;
+  c2y: number;
   ex: number;
   ey: number;
   size: number;
@@ -146,12 +148,19 @@ export const FloatingHeartTapper: React.FC<FloatingHeartTapperProps> = ({
       const renderList: RenderHeart[] = active.map(heart => {
         const elapsed = Math.max(0, now - heart.startAt);
         const progress = Math.min(1, elapsed / heart.duration);
-        const eased = progress < 0.5
-          ? 2 * progress * progress
-          : 1 - Math.pow(-2 * progress + 2, 2) / 2;
+        // Keep speed close to uniform by using linear progress on one smooth cubic path.
+        const eased = progress;
         const oneMinus = 1 - eased;
-        const x = oneMinus * oneMinus * heart.sx + 2 * oneMinus * eased * heart.cx + eased * eased * heart.ex;
-        const y = oneMinus * oneMinus * heart.sy + 2 * oneMinus * eased * heart.cy + eased * eased * heart.ey;
+        const x =
+          oneMinus * oneMinus * oneMinus * heart.sx +
+          3 * oneMinus * oneMinus * eased * heart.c1x +
+          3 * oneMinus * eased * eased * heart.c2x +
+          eased * eased * eased * heart.ex;
+        const y =
+          oneMinus * oneMinus * oneMinus * heart.sy +
+          3 * oneMinus * oneMinus * eased * heart.c1y +
+          3 * oneMinus * eased * eased * heart.c2y +
+          eased * eased * eased * heart.ey;
         const scale = 1 - eased * 0.5;
         const rotate = heart.startRotate + heart.rotateDelta * eased;
         const opacity = 0.95 - eased * 0.78;
@@ -195,19 +204,24 @@ export const FloatingHeartTapper: React.FC<FloatingHeartTapperProps> = ({
       ? targetRect.top + targetRect.height / 2
       : 48;
 
-    const controlPull = 180;
-    const sideBias = -96;
+    const launchDistance = 180;
+    const launchDrop = Math.tan((15 * Math.PI) / 180) * launchDistance;
+    const dipDepth = 230;
+    const dipPullToTarget = 210;
     const next: FlyingHeart = {
       id: Date.now(),
       sx: startX,
       sy: startY,
-      cx: (startX + targetX) / 2 + sideBias,
-      cy: Math.min(startY, targetY) - controlPull,
+      // Make the dip obvious: start at ~15deg down-left, sink deeper, then curve up to header.
+      c1x: startX - launchDistance,
+      c1y: startY + launchDrop + dipDepth,
+      c2x: targetX - dipPullToTarget,
+      c2y: startY + dipDepth,
       ex: targetX,
       ey: targetY,
       size: 20,
       startAt: performance.now(),
-      duration: 1900,
+      duration: 2100,
       startRotate: 0,
       rotateDelta: 24
     };
