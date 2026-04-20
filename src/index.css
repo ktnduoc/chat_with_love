@@ -48,6 +48,14 @@ body {
   color: var(--text-main);
 }
 
+.digital-heart-percent {
+  font-family: "Orbitron", "Share Tech Mono", "Rajdhani", monospace;
+  font-variant-numeric: tabular-nums;
+  letter-spacing: 0.06em;
+  text-shadow: 0 0 8px rgba(244, 114, 182, 0.2), 0 0 18px rgba(244, 114, 182, 0.12);
+  filter: blur(0.7px);
+}
+
 #root {
   width: 100%;
   height: 100dvh;
@@ -224,138 +232,15 @@ body {
   }
 }
 
-@keyframes flame-flicker-outer {
-  0%,
-  100% {
-    transform: translateY(0) scale(1) rotate(-1deg);
-  }
-  25% {
-    transform: translateY(-1px) scale(1.03) rotate(1.5deg);
-  }
-  55% {
-    transform: translateY(-2px) scale(1.07) rotate(-2deg);
-  }
-  78% {
-    transform: translateY(-1px) scale(1.03) rotate(1deg);
-  }
-}
-
-@keyframes flame-flicker-inner {
-  0%,
-  100% {
-    transform: translateY(0) scale(1);
-    opacity: 0.92;
-  }
-  35% {
-    transform: translateY(-2px) scale(1.08);
-    opacity: 1;
-  }
-  70% {
-    transform: translateY(-1px) scale(1.03);
-    opacity: 0.95;
-  }
-}
-
-.flame-svg .flame-outer {
-  transform-origin: 32px 40px;
-  animation: flame-flicker-outer 0.9s ease-in-out infinite;
-}
-
-.flame-svg .flame-inner {
-  transform-origin: 32px 42px;
-  animation: flame-flicker-inner 0.72s ease-in-out infinite;
-}
-
-@keyframes flame-ring-pulse {
+@keyframes floating-heart-tap-burst {
   0% {
-    transform: scale(0.78);
-    opacity: 0.55;
+    transform: scale(1);
   }
-  70% {
-    transform: scale(1.18);
-    opacity: 0;
+  45% {
+    transform: scale(1.16);
   }
   100% {
-    transform: scale(1.22);
-    opacity: 0;
+    transform: scale(1);
   }
 }
 
-@keyframes flame-spark-orbit {
-  0% {
-    transform: rotate(0deg) translateX(32px) rotate(0deg);
-    opacity: 0;
-  }
-  20% {
-    opacity: 1;
-  }
-  80% {
-    opacity: 1;
-  }
-  100% {
-    transform: rotate(360deg) translateX(32px) rotate(-360deg);
-    opacity: 0;
-  }
-}
-
-.flame-evolution-ring {
-  position: absolute;
-  inset: 12%;
-  border: 2px solid rgba(251, 191, 36, 0.5);
-  border-radius: 9999px;
-  pointer-events: none;
-  animation: flame-ring-pulse 1.7s ease-out infinite;
-}
-
-.flame-evolution-ring--2 {
-  inset: 4%;
-  border-color: rgba(253, 224, 71, 0.62);
-  animation-delay: 0.32s;
-}
-
-.flame-evolution-spark {
-  position: absolute;
-  width: 5px;
-  height: 5px;
-  border-radius: 9999px;
-  background: #fde68a;
-  box-shadow: 0 0 8px rgba(253, 224, 71, 0.95);
-  top: calc(50% - 2.5px);
-  left: calc(50% - 2.5px);
-  pointer-events: none;
-  animation: flame-spark-orbit 2.2s linear infinite;
-}
-
-.flame-evolution-spark--a {
-  animation-duration: 2s;
-}
-
-.flame-evolution-spark--b {
-  animation-duration: 2.6s;
-  animation-delay: 0.6s;
-  background: #f9a8d4;
-  box-shadow: 0 0 8px rgba(244, 114, 182, 0.9);
-}
-
-.flame-svg.flame-tier-3 .flame-outer,
-.flame-svg.flame-tier-4 .flame-outer,
-.flame-svg.flame-tier-5 .flame-outer {
-  filter: saturate(1.15) brightness(1.08);
-}
-
-.flame-svg.flame-tier-5 {
-  transform: scale(1.07);
-}
-
-.flame-preview {
-  filter: grayscale(1) saturate(0.1) brightness(1.06);
-}
-
-.flame-preview-ring {
-  border-color: rgba(229, 231, 235, 0.55) !important;
-}
-
-.flame-preview-spark {
-  background: #f3f4f6 !important;
-  box-shadow: 0 0 8px rgba(243, 244, 246, 0.9) !important;
-}

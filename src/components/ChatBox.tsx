@@ -10,6 +10,7 @@ import { Confetti } from './Confetti';
 import { HeartPop } from './HeartPop';
 import { HeartExplosion } from './HeartExplosion';
 import { ScratchToReveal } from './ScratchToReveal';
+import { FloatingHeartTapper } from './FloatingHeartTapper';
 import { supabase } from '../lib/supabase';
 import twemoji from 'twemoji';
 import { useSwipeable } from 'react-swipeable';
@@ -308,13 +309,9 @@ export const ChatBox: React.FC<ChatBoxProps> = ({
   const [sideHeartBurstKey, setSideHeartBurstKey] = useState(0);
   const [dailyHeartEnergy, setDailyHeartEnergy] = useState(0);
   const [animatedHeartEnergy, setAnimatedHeartEnergy] = useState(0);
+  const [interactiveHeartCount, setInteractiveHeartCount] = useState(0);
   const [dailyFireStreak, setDailyFireStreak] = useState(0);
   const [heartRainParticles, setHeartRainParticles] = useState<HeartRainParticle[]>([]);
-  const [hasMutualToday, setHasMutualToday] = useState(false);
-  const [showStreakOverlay, setShowStreakOverlay] = useState(false);
-  const [previewFireStreak, setPreviewFireStreak] = useState<number | null>(null);
-  const [floatingFlamePos, setFloatingFlamePos] = useState({ x: 0, y: 0 });
-  const [isDraggingFlame, setIsDraggingFlame] = useState(false);
   const typingTimeoutRef = useRef<number | undefined>(undefined);
   const partnerTypingTimeoutRef = useRef<number | undefined>(undefined);
   const typingBroadcastChannelRef = useRef<any>(null);
@@ -329,8 +326,9 @@ export const ChatBox: React.FC<ChatBoxProps> = ({
   const touchDragStartRef = useRef<{ x: number; y: number } | null>(null);
   const touchDragMovedRef = useRef(false);
   const suppressNextStickerClickRef = useRef(false);
-  const flamePointerOffsetRef = useRef({ x: 0, y: 0 });
-  const flameMovedDuringDragRef = useRef(false);
+  const headerHeartRef = useRef<HTMLSpanElement>(null);
+  const pendingHeartTapCountRef = useRef(0);
+  const heartTapFlushTimerRef = useRef<number | undefined>(undefined);
   const [messageReactions, setMessageReactions] = useState<Record<string, MessageReactionView[]>>({});
   const [activeReactionPickerFor, setActiveReactionPickerFor] = useState<string | number | null>(null);
   const [isReactionFeatureEnabled, setIsReactionFeatureEnabled] = useState(true);
@@ -713,11 +711,6 @@ export const ChatBox: React.FC<ChatBoxProps> = ({
         .maybeSingle();
 
       const row = streakRow as LoveStreakRow | null;
-      const todayIso = startOfToday.toISOString().slice(0, 10);
-      const isTodayRow = row?.today_day === todayIso;
-      const hasTodayMutual = Boolean(isTodayRow && row?.today_has_low && row?.today_has_high);
-
-      setHasMutualToday(hasTodayMutual);
       setDailyFireStreak(row?.current_streak ?? 0);
     };
 
@@ -746,6 +739,89 @@ export const ChatBox: React.FC<ChatBoxProps> = ({
       }
     };
   }, [currentUser.id, receiver.id, messages.length]);
+
+  useEffect(() => {
+    const [low, high] = currentUser.id < receiver.id
+      ? [currentUser.id, receiver.id]
+      : [receiver.id, currentUser.id];
+
+    const loadHeartInteractionCount = async () => {
+      const { count } = await supabase
+        .from('heart_interactions')
+        .select('id', { count: 'exact', head: true })
+        .eq('user_low', low)
+        .eq('user_high', high);
+
+      setInteractiveHeartCount(count ?? 0);
+    };
+
+    void loadHeartInteractionCount();
+
+    const channel = supabase
+      .channel(`heart-interactions-${low}-${high}`)
+      .on(
+        'postgres_changes',
+        { event: 'INSERT', schema: 'public', table: 'heart_interactions' },
+        (payload) => {
+          const row = payload.new as { sender_id?: string; user_low?: string; user_high?: string };
+          if (row.user_low !== low || row.user_high !== high) return;
+          const senderId = String(row.sender_id || '');
+          if (senderId === currentUser.id) return;
+          setInteractiveHeartCount(prev => prev + 1);
+        }
+      )
+      .subscribe();
+
+    return () => {
+      supabase.removeChannel(channel);
+    };
+  }, [currentUser.id, receiver.id]);
+
+  const flushPendingHeartTaps = () => {
+    const batchCount = pendingHeartTapCountRef.current;
+    if (batchCount <= 0) return;
+
+    pendingHeartTapCountRef.current = 0;
+
+    const [low, high] = currentUser.id < receiver.id
+      ? [currentUser.id, receiver.id]
+      : [receiver.id, currentUser.id];
+
+    setInteractiveHeartCount(prev => prev + batchCount);
+    setSideHeartBurstKey(prev => prev + 1);
+
+    const rows = Array.from({ length: batchCount }, () => ({
+      sender_id: currentUser.id,
+      receiver_id: receiver.id,
+      user_low: low,
+      user_high: high
+    }));
+
+    void supabase
+      .from('heart_interactions')
+      .insert(rows);
+  };
+
+  const handleFloatingHeartTap = () => {
+    pendingHeartTapCountRef.current += 1;
+
+    if (heartTapFlushTimerRef.current) return;
+
+    heartTapFlushTimerRef.current = window.setTimeout(() => {
+      heartTapFlushTimerRef.current = undefined;
+      flushPendingHeartTaps();
+    }, 5000);
+  };
+
+  useEffect(() => {
+    return () => {
+      if (heartTapFlushTimerRef.current) {
+        window.clearTimeout(heartTapFlushTimerRef.current);
+        heartTapFlushTimerRef.current = undefined;
+      }
+      flushPendingHeartTaps();
+    };
+  }, [currentUser.id, receiver.id]);
 
   // Sync openedHeartIds with coming updates from the other person (MANDATORY: MUST BE AFTER messages IS DEFINED)
   useEffect(() => {
@@ -1627,125 +1703,23 @@ export const ChatBox: React.FC<ChatBoxProps> = ({
     const perceptualBoost = Math.sin((clamped / 100) * Math.PI) * 4;
     return Math.max(0, Math.min(100, clamped + perceptualBoost));
   };
+  const createWaveFillBackground = (fill: number, filledColor: string, emptyColor: string, waveColor: string) => {
+    const clampedFill = Math.max(0, Math.min(100, fill));
+    const boundary = 100 - clampedFill;
+    return {
+      backgroundImage: [
+        `linear-gradient(to top, ${filledColor} 0%, ${filledColor} ${clampedFill}%, ${emptyColor} ${clampedFill}%, ${emptyColor} 100%)`,
+        `radial-gradient(14px 7px at 7px 100%, ${waveColor} 96%, transparent 100%)`,
+        `radial-gradient(14px 7px at 7px 0%, ${waveColor} 96%, transparent 100%)`
+      ].join(','),
+      backgroundRepeat: 'no-repeat, repeat-x, repeat-x',
+      backgroundSize: '100% 100%, 34px 12px, 34px 12px',
+      backgroundPosition: `0 0, 0 calc(${boundary}% - 6px), 17px calc(${boundary}% - 1px)`
+    } as React.CSSProperties;
+  };
   const heartMainFill = toHeartVisualFill(animatedHeartEnergy);
   const heartSmallFill = toHeartVisualFill(animatedHeartEnergy * 0.98);
-  const reviewStages = [10, 20, 30, 50, 100] as const;
-  const isPreviewFire = previewFireStreak !== null;
-  const effectiveFireStreak = previewFireStreak ?? dailyFireStreak;
-  const effectiveMutualToday = isPreviewFire ? true : hasMutualToday;
-  const fireChain = effectiveFireStreak > 0 ? '🔥'.repeat(Math.min(5, effectiveFireStreak)) : '';
-  const flamePower = effectiveMutualToday
-    ? Math.min(1, 0.68 + effectiveFireStreak * 0.06)
-    : Math.min(0.55, 0.24 + effectiveFireStreak * 0.035);
-  const flameSpeed = effectiveMutualToday
-    ? Math.max(0.34, 0.92 - effectiveFireStreak * 0.04)
-    : Math.max(0.6, 1.24 - effectiveFireStreak * 0.02);
-  const flameTier = effectiveFireStreak >= 100 ? 5 : effectiveFireStreak >= 50 ? 4 : effectiveFireStreak >= 30 ? 3 : effectiveFireStreak >= 20 ? 2 : effectiveFireStreak >= 10 ? 1 : 0;
-  const flameOuterPath = flameTier >= 5
-    ? 'M33 2c5 10 4 17-2 24-4 5-6 9-6 14 0 9 7 16 16 16s16-7 16-16c0-10-6-17-24-38z'
-    : flameTier >= 3
-      ? 'M34 4c3 9 1 15-4 21-4 5-5 8-5 13 0 8 6 14 14 14s14-6 14-14c0-9-5-15-19-34z'
-      : 'M34 5c2 9-1 14-5 19-3 4-4 7-4 11 0 6 5 11 11 11s11-5 11-11c0-7-4-12-13-30z';
-  const flameInnerPath = flameTier >= 5
-    ? 'M33 18c2 5 1 9-2 13-2 3-3 5-3 8 0 6 4 10 10 10s10-4 10-10c0-6-4-11-15-21z'
-    : flameTier >= 3
-      ? 'M33 20c1 4 0 8-2 11-2 3-2 4-2 7 0 5 4 8 8 8s8-3 8-8c0-5-3-9-12-18z'
-      : 'M33 22c1 4 0 7-2 10-2 2-2 4-2 6 0 4 3 7 7 7s7-3 7-7c0-4-2-8-10-16z';
-  const flameSizeBoost = flameTier >= 5 ? 30 : flameTier >= 4 ? 22 : flameTier >= 3 ? 14 : flameTier >= 2 ? 8 : flameTier >= 1 ? 4 : 0;
-  const floatingFlameSize = 56 + flameSizeBoost;
-  const overlayFlameScale = flameTier >= 5 ? 1.35 : flameTier >= 4 ? 1.24 : flameTier >= 3 ? 1.16 : flameTier >= 2 ? 1.08 : flameTier >= 1 ? 1.03 : 1;
-  const flameModeLabel = flameTier >= 5 ? 'DIVINE 100' : flameTier >= 4 ? 'TITAN 50' : flameTier >= 3 ? 'PHOENIX 30' : flameTier >= 2 ? 'BLAZE 20' : flameTier >= 1 ? 'WARM 10' : 'EMBER';
-  const floatingFlameStorageKey = `lovechat:floating-flame:${[currentUser.id, receiver.id].sort().join('-')}`;
-
-  const clampFloatingFlame = (nextX: number, nextY: number) => {
-    const padding = 8;
-    const maxX = Math.max(padding, window.innerWidth - floatingFlameSize - padding);
-    const maxY = Math.max(padding, window.innerHeight - floatingFlameSize - padding);
-    return {
-      x: Math.min(Math.max(nextX, padding), maxX),
-      y: Math.min(Math.max(nextY, padding), maxY)
-    };
-  };
-
-  const handleFloatingFlamePointerDown = (event: React.PointerEvent<HTMLButtonElement>) => {
-    event.preventDefault();
-    flameMovedDuringDragRef.current = false;
-    setIsDraggingFlame(true);
-    flamePointerOffsetRef.current = {
-      x: event.clientX - floatingFlamePos.x,
-      y: event.clientY - floatingFlamePos.y
-    };
-  };
-
-  const handleFloatingFlameClick = () => {
-    if (flameMovedDuringDragRef.current) {
-      flameMovedDuringDragRef.current = false;
-      return;
-    }
-    setShowStreakOverlay(true);
-  };
-
-  useEffect(() => {
-    const fallback = clampFloatingFlame(window.innerWidth - 90, 96);
-
-    try {
-      const raw = window.localStorage.getItem(floatingFlameStorageKey);
-      if (!raw) {
-        setFloatingFlamePos(fallback);
-        return;
-      }
-
-      const parsed = JSON.parse(raw) as { x?: number; y?: number };
-      if (typeof parsed.x === 'number' && typeof parsed.y === 'number') {
-        setFloatingFlamePos(clampFloatingFlame(parsed.x, parsed.y));
-      } else {
-        setFloatingFlamePos(fallback);
-      }
-    } catch {
-      setFloatingFlamePos(fallback);
-    }
-  }, [floatingFlameStorageKey]);
-
-  useEffect(() => {
-    if (floatingFlamePos.x === 0 && floatingFlamePos.y === 0) return;
-    try {
-      window.localStorage.setItem(floatingFlameStorageKey, JSON.stringify(floatingFlamePos));
-    } catch {
-      // Ignore storage errors (private mode/quota)
-    }
-  }, [floatingFlamePos, floatingFlameStorageKey]);
-
-  useEffect(() => {
-    if (!isDraggingFlame) return;
-
-    const onPointerMove = (event: PointerEvent) => {
-      const nextX = event.clientX - flamePointerOffsetRef.current.x;
-      const nextY = event.clientY - flamePointerOffsetRef.current.y;
-      flameMovedDuringDragRef.current = true;
-      setFloatingFlamePos(clampFloatingFlame(nextX, nextY));
-    };
-
-    const onPointerUp = () => {
-      setIsDraggingFlame(false);
-    };
-
-    window.addEventListener('pointermove', onPointerMove);
-    window.addEventListener('pointerup', onPointerUp);
-
-    return () => {
-      window.removeEventListener('pointermove', onPointerMove);
-      window.removeEventListener('pointerup', onPointerUp);
-    };
-  }, [isDraggingFlame]);
-
-  useEffect(() => {
-    const onResize = () => {
-      setFloatingFlamePos(prev => clampFloatingFlame(prev.x, prev.y));
-    };
-
-    window.addEventListener('resize', onResize);
-    return () => window.removeEventListener('resize', onResize);
-  }, []);
+  const streakChain = dailyFireStreak > 0 ? '🔥' : '';
 
   useEffect(() => {
     if (typeof window === 'undefined') return;
@@ -1775,10 +1749,6 @@ export const ChatBox: React.FC<ChatBoxProps> = ({
       vv.removeEventListener('scroll', updateKeyboardInset);
     };
   }, [isComposerFocused]);
-
-  useEffect(() => {
-    setFloatingFlamePos(prev => clampFloatingFlame(prev.x, prev.y));
-  }, [floatingFlameSize]);
 
   const updateSendButtonCoords = () => {
     if (!sendButtonRef.current || !viewportRef.current) {
@@ -1856,58 +1826,7 @@ export const ChatBox: React.FC<ChatBoxProps> = ({
       
       {showWelcomeFireworks && <Confetti />}
 
-      <button
-        type="button"
-        onPointerDown={handleFloatingFlamePointerDown}
-        onClick={handleFloatingFlameClick}
-        className={cn(
-          "fixed z-[1450] rounded-full touch-none select-none",
-          isDraggingFlame ? "cursor-grabbing scale-110" : "cursor-grab hover:scale-105"
-        )}
-        style={{
-          left: `${floatingFlamePos.x}px`,
-          top: `${floatingFlamePos.y}px`,
-          width: `${floatingFlameSize}px`,
-          height: `${floatingFlameSize}px`
-        }}
-        title="Kéo để dời lửa, chạm để xem chuỗi"
-      >
-        {flameTier >= 2 && <span className={cn("flame-evolution-ring", isPreviewFire && "flame-preview-ring")} />}
-        {flameTier >= 4 && <span className={cn("flame-evolution-ring flame-evolution-ring--2", isPreviewFire && "flame-preview-ring")} />}
-        {flameTier >= 3 && <span className={cn("flame-evolution-spark flame-evolution-spark--a", isPreviewFire && "flame-preview-spark")} />}
-        {flameTier >= 3 && <span className={cn("flame-evolution-spark flame-evolution-spark--b", isPreviewFire && "flame-preview-spark")} />}
-        <svg viewBox="0 0 64 64" className={cn(`w-full h-full flame-svg flame-tier-${flameTier}`, isPreviewFire && "flame-preview")} style={{ opacity: 0.62 + flamePower * 0.38, filter: `drop-shadow(0 0 ${8 + flamePower * 16}px ${isPreviewFire ? 'rgba(255,255,255,0.42)' : `rgba(251,113,133,${0.3 + flamePower * 0.55})`})` }}>
-          <defs>
-            <linearGradient id="flameOuterFloat" x1="0" y1="1" x2="0" y2="0">
-              <stop offset="0%" stopColor={isPreviewFire ? '#9ca3af' : '#ef4444'} />
-              <stop offset="45%" stopColor={isPreviewFire ? '#d1d5db' : flameTier >= 3 ? '#f97316' : '#fb7185'} />
-              <stop offset="100%" stopColor={isPreviewFire ? '#f3f4f6' : '#fde68a'} />
-            </linearGradient>
-            <linearGradient id="flameInnerFloat" x1="0" y1="1" x2="0" y2="0">
-              <stop offset="0%" stopColor={isPreviewFire ? '#e5e7eb' : '#fb7185'} />
-              <stop offset="100%" stopColor={isPreviewFire ? '#ffffff' : flameTier >= 5 ? '#fff7c2' : '#ffffff'} />
-            </linearGradient>
-          </defs>
-          {flameTier >= 5 && (
-            <path d="M22 34c-3-5-3-9 0-14 1 4 4 6 7 8-2 2-4 4-7 6z" fill={isPreviewFire ? '#d1d5db' : '#f59e0b'} opacity="0.85" className="flame-outer" style={{ animationDuration: `${Math.max(0.3, flameSpeed - 0.16)}s` }} />
-          )}
-          {flameTier >= 5 && (
-            <path d="M46 34c3-5 3-9 0-14-1 4-4 6-7 8 2 2 4 4 7 6z" fill={isPreviewFire ? '#d1d5db' : '#f59e0b'} opacity="0.85" className="flame-outer" style={{ animationDuration: `${Math.max(0.3, flameSpeed - 0.16)}s` }} />
-          )}
-          <path
-            d={flameOuterPath}
-            fill="url(#flameOuterFloat)"
-            className="flame-outer"
-            style={{ animationDuration: `${flameSpeed}s` }}
-          />
-          <path
-            d={flameInnerPath}
-            fill="url(#flameInnerFloat)"
-            className="flame-inner"
-            style={{ animationDuration: `${Math.max(0.35, flameSpeed - 0.12)}s` }}
-          />
-        </svg>
-      </button>
+      <FloatingHeartTapper targetRef={headerHeartRef} onTap={handleFloatingHeartTap} />
       
       {pops.map(pop => (
         <HeartPop key={pop.id} x={pop.x} y={pop.y} onComplete={() => setPops(prev => prev.filter(p => p.id !== pop.id))} />
@@ -1946,89 +1865,6 @@ export const ChatBox: React.FC<ChatBoxProps> = ({
         </div>
       )}
 
-      {showStreakOverlay && (
-        <div className="fixed inset-0 z-[1800] bg-black/80 backdrop-blur-xl flex flex-col items-center justify-center p-6">
-          <button
-            type="button"
-            onClick={() => {
-              setShowStreakOverlay(false);
-              setPreviewFireStreak(null);
-            }}
-            className="absolute top-6 right-6 w-11 h-11 rounded-full bg-white/10 border border-white/20 text-white flex items-center justify-center"
-            title="Đóng"
-          >
-            <X className="w-5 h-5" />
-          </button>
-
-          <div className="relative w-[clamp(160px,36vw,320px)] h-[clamp(190px,42vw,360px)] flex items-center justify-center" style={{ transform: `scale(${overlayFlameScale})` }}>
-            {flameTier >= 2 && <span className={cn("flame-evolution-ring", isPreviewFire && "flame-preview-ring")} />}
-            {flameTier >= 4 && <span className={cn("flame-evolution-ring flame-evolution-ring--2", isPreviewFire && "flame-preview-ring")} />}
-            {flameTier >= 3 && <span className={cn("flame-evolution-spark flame-evolution-spark--a", isPreviewFire && "flame-preview-spark")} />}
-            {flameTier >= 3 && <span className={cn("flame-evolution-spark flame-evolution-spark--b", isPreviewFire && "flame-preview-spark")} />}
-            <svg viewBox="0 0 64 64" className={cn(`w-full h-full flame-svg flame-tier-${flameTier}`, isPreviewFire && "flame-preview")} style={{ opacity: 0.7 + flamePower * 0.3, filter: `drop-shadow(0 0 ${18 + flamePower * 28}px ${isPreviewFire ? 'rgba(255,255,255,0.45)' : `rgba(251,113,133,${0.45 + flamePower * 0.4})`})` }}>
-              <defs>
-                <linearGradient id="flameOuterFull" x1="0" y1="1" x2="0" y2="0">
-                  <stop offset="0%" stopColor={isPreviewFire ? '#9ca3af' : '#ef4444'} />
-                  <stop offset="42%" stopColor={isPreviewFire ? '#d1d5db' : flameTier >= 3 ? '#f97316' : '#fb7185'} />
-                  <stop offset="100%" stopColor={isPreviewFire ? '#f3f4f6' : '#fde68a'} />
-                </linearGradient>
-                <linearGradient id="flameInnerFull" x1="0" y1="1" x2="0" y2="0">
-                  <stop offset="0%" stopColor={isPreviewFire ? '#e5e7eb' : '#fb7185'} />
-                  <stop offset="100%" stopColor={isPreviewFire ? '#ffffff' : flameTier >= 5 ? '#fff7c2' : '#fff7ed'} />
-                </linearGradient>
-              </defs>
-              {flameTier >= 5 && (
-                <path d="M22 34c-3-5-3-9 0-14 1 4 4 6 7 8-2 2-4 4-7 6z" fill={isPreviewFire ? '#d1d5db' : '#f59e0b'} opacity="0.9" className="flame-outer" style={{ animationDuration: `${Math.max(0.28, flameSpeed - 0.2)}s` }} />
-              )}
-              {flameTier >= 5 && (
-                <path d="M46 34c3-5 3-9 0-14-1 4-4 6-7 8 2 2 4 4 7 6z" fill={isPreviewFire ? '#d1d5db' : '#f59e0b'} opacity="0.9" className="flame-outer" style={{ animationDuration: `${Math.max(0.28, flameSpeed - 0.2)}s` }} />
-              )}
-              <path
-                d={flameOuterPath}
-                fill="url(#flameOuterFull)"
-                className="flame-outer"
-                style={{ animationDuration: `${Math.max(0.34, flameSpeed - 0.1)}s` }}
-              />
-              <path
-                d={flameInnerPath}
-                fill="url(#flameInnerFull)"
-                className="flame-inner"
-                style={{ animationDuration: `${Math.max(0.28, flameSpeed - 0.22)}s` }}
-              />
-            </svg>
-          </div>
-
-          <div className="mt-8 text-center text-white">
-            <p className="text-5xl sm:text-6xl font-black">{effectiveFireStreak}</p>
-            <p className="mt-2 text-sm sm:text-base font-bold uppercase tracking-[0.2em] text-rose-200">ngày liên tiếp</p>
-            <p className="mt-1 text-[10px] sm:text-xs font-black tracking-[0.25em] text-amber-200/90">{isPreviewFire ? `${flameModeLabel} PREVIEW` : flameModeLabel}</p>
-            <p className="mt-4 text-xs sm:text-sm text-rose-100/85">Nhắn mỗi ngày để lửa cháy mãnh liệt hơn</p>
-            <div className="mt-5 flex flex-wrap items-center justify-center gap-2">
-              {reviewStages.map(stage => (
-                <button
-                  key={stage}
-                  type="button"
-                  onClick={() => setPreviewFireStreak(stage)}
-                  className={cn(
-                    "px-3 py-1.5 rounded-full text-[11px] sm:text-xs font-black tracking-wide border transition-colors",
-                    previewFireStreak === stage ? "bg-rose-400 border-rose-200 text-white" : "bg-white/10 border-white/20 text-rose-100 hover:bg-white/20"
-                  )}
-                >
-                  {stage} ngày
-                </button>
-              ))}
-              <button
-                type="button"
-                onClick={() => setPreviewFireStreak(null)}
-                className="px-3 py-1.5 rounded-full text-[11px] sm:text-xs font-black tracking-wide border bg-rose-500/80 hover:bg-rose-400 border-rose-200 text-white transition-colors"
-              >
-                Dữ liệu thật
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
-
       {/* Floating Toggle Button during Focused Mode */}
       {isFocusedMode && (
         <button 
@@ -2057,11 +1893,11 @@ export const ChatBox: React.FC<ChatBoxProps> = ({
           <div>
             <h3 className={cn("font-black text-base sm:text-lg md:text-xl flex items-center transition-colors", isFocusedMode ? "text-white drop-shadow-lg" : "text-[var(--text-main)]")}>
                <span className="max-w-[120px] sm:max-w-[180px] md:max-w-[280px] truncate inline-block align-bottom">{receiver.username}</span>
-               <span className="ml-2 text-pink-500">❤️</span>
+               <span ref={headerHeartRef} className="ml-2 text-pink-500">❤️</span>
             </h3>
             <p className={cn("text-[9px] sm:text-[10px] font-black tracking-wide flex items-center whitespace-nowrap transition-all", isFocusedMode ? "text-white/70" : "text-pink-400")}>
                <span className={cn("inline-block w-2 h-2 rounded-full mr-2", isOnline ? "bg-green-400 animate-pulse shadow-[0_0_8px_rgba(74,222,128,0.8)]" : "bg-gray-300")} />
-              {fireChain ? `${fireChain} ${effectiveFireStreak} ngày` : 'Chưa có chuỗi'} · Tim {dailyHeartEnergy}%
+              {streakChain ? `${streakChain} ${dailyFireStreak} ngày` : 'Chưa có chuỗi'} · Tim tương tác {interactiveHeartCount}
             </p>
           </div>
         </div>
@@ -2204,9 +2040,12 @@ export const ChatBox: React.FC<ChatBoxProps> = ({
                 height: 'clamp(230px, 56vw, 480px)',
                 transform: 'translate(-50%, -50%) rotate(-14deg)',
                 animation: sideHeartBurstKey > 0 ? 'rose-heart-main-burst 0.9s cubic-bezier(0.2,0.8,0.25,1)' : undefined,
-                background: isDarkMode
-                  ? `linear-gradient(to top, rgba(244,63,94,0.94) 0%, rgba(244,63,94,0.94) ${heartMainFill}%, rgba(255,228,230,0.1) ${heartMainFill}%, rgba(255,228,230,0.1) 100%)`
-                  : `linear-gradient(to top, rgba(239,68,68,0.9) 0%, rgba(239,68,68,0.9) ${heartMainFill}%, rgba(251,113,133,0.2) ${heartMainFill}%, rgba(251,113,133,0.2) 100%)`,
+                ...createWaveFillBackground(
+                  heartMainFill,
+                  isDarkMode ? 'rgba(244,63,94,0.94)' : 'rgba(239,68,68,0.9)',
+                  isDarkMode ? 'rgba(255,228,230,0.1)' : 'rgba(251,113,133,0.2)',
+                  isDarkMode ? 'rgba(254,205,211,0.52)' : 'rgba(251,113,133,0.46)'
+                ),
                 WebkitMaskImage: "url(\"data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'><path d='M12 21.35l-1.45-1.32C5.4 15.36 2 12.28 2 8.5A5.5 5.5 0 0 1 7.5 3c1.74 0 3.41.81 4.5 2.09A6 6 0 0 1 16.5 3 5.5 5.5 0 0 1 22 8.5c0 3.78-3.4 6.86-8.55 11.54z'/></svg>\")",
                 maskImage: "url(\"data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'><path d='M12 21.35l-1.45-1.32C5.4 15.36 2 12.28 2 8.5A5.5 5.5 0 0 1 7.5 3c1.74 0 3.41.81 4.5 2.09A6 6 0 0 1 16.5 3 5.5 5.5 0 0 1 22 8.5c0 3.78-3.4 6.86-8.55 11.54z'/></svg>\")",
                 WebkitMaskSize: 'contain',
@@ -2227,9 +2066,12 @@ export const ChatBox: React.FC<ChatBoxProps> = ({
                 height: 'clamp(120px, 26vw, 220px)',
                 transform: 'translate(-50%, -50%) rotate(18deg)',
                 animation: sideHeartBurstKey > 0 ? 'rose-heart-small-burst 0.86s cubic-bezier(0.2,0.8,0.25,1)' : undefined,
-                background: isDarkMode
-                  ? `linear-gradient(to top, rgba(244,63,94,0.9) 0%, rgba(244,63,94,0.9) ${heartSmallFill}%, rgba(255,228,230,0.08) ${heartSmallFill}%, rgba(255,228,230,0.08) 100%)`
-                  : `linear-gradient(to top, rgba(239,68,68,0.86) 0%, rgba(239,68,68,0.86) ${heartSmallFill}%, rgba(251,113,133,0.18) ${heartSmallFill}%, rgba(251,113,133,0.18) 100%)`,
+                ...createWaveFillBackground(
+                  heartSmallFill,
+                  isDarkMode ? 'rgba(244,63,94,0.9)' : 'rgba(239,68,68,0.86)',
+                  isDarkMode ? 'rgba(255,228,230,0.08)' : 'rgba(251,113,133,0.18)',
+                  isDarkMode ? 'rgba(254,205,211,0.46)' : 'rgba(251,113,133,0.38)'
+                ),
                 WebkitMaskImage: "url(\"data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'><path d='M12 21.35l-1.45-1.32C5.4 15.36 2 12.28 2 8.5A5.5 5.5 0 0 1 7.5 3c1.74 0 3.41.81 4.5 2.09A6 6 0 0 1 16.5 3 5.5 5.5 0 0 1 22 8.5c0 3.78-3.4 6.86-8.55 11.54z'/></svg>\")",
                 maskImage: "url(\"data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'><path d='M12 21.35l-1.45-1.32C5.4 15.36 2 12.28 2 8.5A5.5 5.5 0 0 1 7.5 3c1.74 0 3.41.81 4.5 2.09A6 6 0 0 1 16.5 3 5.5 5.5 0 0 1 22 8.5c0 3.78-3.4 6.86-8.55 11.54z'/></svg>\")",
                 WebkitMaskSize: 'contain',
@@ -2259,6 +2101,17 @@ export const ChatBox: React.FC<ChatBoxProps> = ({
                 opacity: isDarkMode ? 0.8 : 0.72
               }}
             />
+
+            <div
+              className="absolute left-[56%] top-[48%] -translate-x-1/2 -translate-y-1/2 pointer-events-none z-10 text-center"
+            >
+              <p className={cn(
+                "digital-heart-percent text-[5rem] sm:text-[7.5rem] font-black leading-none opacity-40",
+                isDarkMode ? "text-white" : "text-rose-700"
+              )}>
+                {Math.round(animatedHeartEnergy)}%
+              </p>
+            </div>
           </>
         )}
 
